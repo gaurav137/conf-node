@@ -4,7 +4,7 @@ A collection of Go binaries for confidential inferencing on AKS Flex nodes.
 
 ## Binaries
 
-- **kublet-proxy** - Kubernetes kubelet proxy that intercepts API server communication for pod admission control
+- **kubelet-proxy** - Kubernetes kubelet proxy that intercepts API server communication for pod admission control
 
 ## Prerequisites
 
@@ -20,7 +20,7 @@ make build
 
 Build a specific binary:
 ```bash
-make kublet-proxy
+make kubelet-proxy
 ```
 
 ## Other Commands
@@ -34,15 +34,15 @@ make lint    # Run linter (requires golangci-lint)
 make help    # Show available targets
 ```
 
-## kublet-proxy
+## kubelet-proxy
 
-The kublet-proxy is a binary that runs on a Kubernetes node, intercepting HTTP traffic between the kubelet and the API server. It watches for pod assignments and allows you to inspect, accept, or reject pods before they are created on the node.
+The kubelet-proxy is a binary that runs on a Kubernetes node, intercepting HTTP traffic between the kubelet and the API server. It watches for pod assignments and allows you to inspect, accept, or reject pods before they are created on the node.
 
 ### Architecture
 
 ```
 ┌─────────────┐      ┌──────────────┐      ┌─────────────┐
-│  API Server │ ←──→ │ kublet-proxy │ ←──→ │   Kubelet   │
+│  API Server │ ←──→ │ kubelet-proxy │ ←──→ │   Kubelet   │
 └─────────────┘      └──────────────┘      └─────────────┘
                             │
                             ▼
@@ -50,7 +50,7 @@ The kublet-proxy is a binary that runs on a Kubernetes node, intercepting HTTP t
                      (accept/reject pod)
 ```
 
-The kubelet connects to kublet-proxy (thinking it's the API server). The proxy:
+The kubelet connects to kubelet-proxy (thinking it's the API server). The proxy:
 1. Forwards all requests to the real API server
 2. Intercepts pod watch/list **responses** from the API server
 3. Evaluates each pod against admission policies
@@ -68,7 +68,7 @@ When a pod is rejected, the proxy uses the **Kubernetes-native rejection pattern
 status:
   phase: Failed
   reason: NodeAdmissionRejected
-  message: "Pod rejected by kublet-proxy: <policy reason>"
+  message: "Pod rejected by kubelet-proxy: <policy reason>"
   conditions:
     - type: Ready
       status: "False"
@@ -96,7 +96,7 @@ This approach:
 ### Usage
 
 ```bash
-./bin/kublet-proxy \
+./bin/kubelet-proxy \
   --kubeconfig /path/to/kubeconfig \
   --listen-addr :6443 \
   --tls-cert /path/to/server.crt \
@@ -107,11 +107,11 @@ This approach:
 
 ### Deployment
 
-On the node, configure the kubelet to connect to kublet-proxy instead of the API server directly:
+On the node, configure the kubelet to connect to kubelet-proxy instead of the API server directly:
 
-1. Start kublet-proxy with the node's kubeconfig file
-2. Update kubelet configuration to point to kublet-proxy's address
-3. kublet-proxy forwards traffic to the real API server
+1. Start kubelet-proxy with the node's kubeconfig file
+2. Update kubelet configuration to point to kubelet-proxy's address
+3. kubelet-proxy forwards traffic to the real API server
 
 ### Command Line Options
 
@@ -165,9 +165,9 @@ Create a JSON policy file to define admission rules. See [examples/admission-pol
 ```
 .
 ├── cmd/
-│   └── kublet-proxy/           # kublet-proxy binary entry point
+│   └── kubelet-proxy/           # kubelet-proxy binary entry point
 ├── internal/
-│   └── kubletproxy/
+│   └── kubeletproxy/
 │       ├── admission/          # Admission control logic
 │       │   ├── admission.go    # Core admission types
 │       │   ├── chain.go        # Chain multiple controllers

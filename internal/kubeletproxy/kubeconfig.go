@@ -1,4 +1,4 @@
-package kubletproxy
+package kubeletproxy
 
 import (
 	"encoding/base64"

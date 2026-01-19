@@ -5,24 +5,24 @@ GOFLAGS := -v
 BUILD_DIR := bin
 
 # Binary names
-KUBLET_PROXY := kublet-proxy
+KUBELET_PROXY := kubelet-proxy
 
 # Build flags
 LDFLAGS := -ldflags "-s -w"
 
-.PHONY: all build clean kublet-proxy help
+.PHONY: all build clean kubelet-proxy help
 
 ## all: Build all binaries
 all: build
 
 ## build: Build all binaries
-build: kublet-proxy
+build: kubelet-proxy
 
-## kublet-proxy: Build the kublet-proxy binary
-kublet-proxy:
-	@echo "Building kublet-proxy..."
+## kubelet-proxy: Build the kubelet-proxy binary
+kubelet-proxy:
+	@echo "Building kubelet-proxy..."
 	@mkdir -p $(BUILD_DIR)
-	$(GO) build $(GOFLAGS) $(LDFLAGS) -o $(BUILD_DIR)/$(KUBLET_PROXY) ./cmd/kublet-proxy
+	$(GO) build $(GOFLAGS) $(LDFLAGS) -o $(BUILD_DIR)/$(KUBELET_PROXY) ./cmd/kubelet-proxy
 
 ## clean: Remove build artifacts
 clean:
@@ -44,6 +44,18 @@ vet:
 ## lint: Run linter (requires golangci-lint)
 lint:
 	golangci-lint run ./...
+
+## deploy-kind: Deploy kubelet-proxy to a kind cluster for testing
+deploy-kind:
+	@./scripts/deploy-kind.sh
+
+## teardown-kind: Remove the kind test cluster
+teardown-kind:
+	@./scripts/teardown-kind.sh
+
+## test-kind: Run tests against the kind cluster deployment
+test-kind:
+	@./scripts/test-deployment.sh
 
 ## help: Show this help message
 help:

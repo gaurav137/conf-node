@@ -1,4 +1,4 @@
-package kubletproxy
+package kubeletproxy
 
 import (
 	"bufio"
@@ -18,7 +18,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gaurav137/conf-inferencing/internal/kubletproxy/admission"
+	"github.com/gaurav137/conf-inferencing/internal/kubeletproxy/admission"
 )
 
 // Proxy intercepts traffic between kubelet and API server.
@@ -27,9 +27,9 @@ import (
 //
 // Architecture:
 //
-//	Kubelet <---> kublet-proxy <---> API Server
+//	Kubelet <---> kubelet-proxy <---> API Server
 //
-// The kubelet connects to kublet-proxy thinking it's the API server.
+// The kubelet connects to kubelet-proxy thinking it's the API server.
 // The proxy forwards requests to the real API server and filters responses.
 type Proxy struct {
 	config              *Config
@@ -56,7 +56,7 @@ func New(cfg *Config, admissionController admission.Controller) (*Proxy, error) 
 		return nil, fmt.Errorf("invalid API server URL from kubeconfig: %w", err)
 	}
 
-	logger := log.New(os.Stdout, "[kublet-proxy] ", log.LstdFlags|log.Lmicroseconds)
+	logger := log.New(os.Stdout, "[kubelet-proxy] ", log.LstdFlags|log.Lmicroseconds)
 
 	p := &Proxy{
 		config:              cfg,
@@ -130,8 +130,12 @@ func (p *Proxy) director(req *http.Request) {
 		req.Header.Set("Authorization", "Bearer "+p.bearerToken)
 	}
 
+	// Force JSON responses instead of protobuf
+	// Kubelet requests protobuf by default, but we need JSON to parse and filter pods
+	req.Header.Set("Accept", "application/json")
+
 	if _, ok := req.Header["User-Agent"]; !ok {
-		req.Header.Set("User-Agent", "kublet-proxy/1.0")
+		req.Header.Set("User-Agent", "kubelet-proxy/1.0")
 	}
 }
 
@@ -294,6 +298,15 @@ func (p *Proxy) createUpstreamRequest(r *http.Request) *http.Request {
 	upstreamReq, _ := http.NewRequest(r.Method, upstreamURL.String(), r.Body)
 	upstreamReq.Header = r.Header.Clone()
 	upstreamReq.Host = p.apiServerURL.Host
+
+	// Force JSON responses instead of protobuf
+	// Kubelet requests protobuf by default, but we need JSON to parse and filter pods
+	upstreamReq.Header.Set("Accept", "application/json")
+
+	// Add bearer token if available
+	if p.bearerToken != "" {
+		upstreamReq.Header.Set("Authorization", "Bearer "+p.bearerToken)
+	}
 
 	return upstreamReq
 }
@@ -492,7 +505,7 @@ func (p *Proxy) rejectPodViaStatus(namespace, name, reason string) {
 		"status": map[string]interface{}{
 			"phase":   "Failed",
 			"reason":  "NodeAdmissionRejected",
-			"message": fmt.Sprintf("Pod rejected by kublet-proxy: %s", reason),
+			"message": fmt.Sprintf("Pod rejected by kubelet-proxy: %s", reason),
 			"conditions": []map[string]interface{}{
 				{
 					"type":               "Ready",
@@ -579,7 +592,7 @@ func (p *Proxy) createPodRejectedResponse(pod map[string]interface{}) []byte {
 		"apiVersion": "v1",
 		"metadata":   map[string]interface{}{},
 		"status":     "Failure",
-		"message":    fmt.Sprintf("pod %s/%s rejected by kublet-proxy policy", namespace, name),
+		"message":    fmt.Sprintf("pod %s/%s rejected by kubelet-proxy policy", namespace, name),
 		"reason":     "Forbidden",
 		"code":       403,
 	}

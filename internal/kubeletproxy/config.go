@@ -1,4 +1,4 @@
-package kubletproxy
+package kubeletproxy
 
 // Config holds the configuration for the kubelet proxy
 type Config struct {

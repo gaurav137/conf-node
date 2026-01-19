@@ -8,8 +8,8 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/gaurav137/conf-inferencing/internal/kubletproxy"
-	"github.com/gaurav137/conf-inferencing/internal/kubletproxy/admission"
+	"github.com/gaurav137/conf-inferencing/internal/kubeletproxy"
+	"github.com/gaurav137/conf-inferencing/internal/kubeletproxy/admission"
 )
 
 func main() {
@@ -17,7 +17,7 @@ func main() {
 }
 
 func run() int {
-	cfg := &kubletproxy.Config{}
+	cfg := &kubeletproxy.Config{}
 
 	flag.StringVar(&cfg.KubeconfigPath, "kubeconfig", "", "Path to kubeconfig file for API server connection (required)")
 	flag.StringVar(&cfg.KubeconfigContext, "context", "", "Context to use from kubeconfig (optional, uses current-context if empty)")
@@ -56,7 +56,7 @@ func run() int {
 	}
 
 	// Create and configure proxy
-	proxy, err := kubletproxy.New(cfg, admissionController)
+	proxy, err := kubeletproxy.New(cfg, admissionController)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error creating proxy: %v\n", err)
 		return 1
@@ -76,7 +76,7 @@ func run() int {
 	}()
 
 	// Start proxy
-	fmt.Printf("Starting kublet-proxy...\n")
+	fmt.Printf("Starting kubelet-proxy...\n")
 	fmt.Printf("  Listening on: %s\n", cfg.ListenAddr)
 	fmt.Printf("  API Server: %s\n", cfg.LoadedKubeConfig.Server)
 	fmt.Printf("  TLS: %v\n", cfg.TLSCertFile != "")
