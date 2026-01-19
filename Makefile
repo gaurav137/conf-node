@@ -47,15 +47,15 @@ lint:
 
 ## deploy-kind: Deploy kubelet-proxy to a kind cluster for testing
 deploy-kind:
-	@./scripts/deploy-kind.sh
+	@./scripts/kind/deploy-kind.sh
 
 ## teardown-kind: Remove the kind test cluster
 teardown-kind:
-	@./scripts/teardown-kind.sh
+	@./scripts/kind/teardown-kind.sh
 
 ## test-kind: Run tests against the kind cluster deployment
 test-kind:
-	@./scripts/test-deployment.sh
+	@./scripts/kind/test-deployment.sh
 
 ## help: Show this help message
 help:
