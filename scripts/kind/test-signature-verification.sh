@@ -83,7 +83,6 @@ ExecStart=/usr/local/bin/kubelet-proxy \
     --listen-addr 127.0.0.1:6444 \
     --tls-cert /etc/kubelet-proxy/kubelet-proxy.crt \
     --tls-key /etc/kubelet-proxy/kubelet-proxy.key \
-    --admission-policy /etc/kubelet-proxy/admission-policy.json \
     --signature-verification-cert /etc/kubelet-proxy/signing/signing-cert.pem \
     --log-requests=true \
     --log-pod-payloads=false
