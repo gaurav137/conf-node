@@ -159,24 +159,86 @@ Use the signing-server (deployed in the kind cluster) and the sign-pod.sh helper
 # Sign a pod spec using the signing-server (outputs signed YAML to stdout)
 ./scripts/sign-pod.sh sign-spec my-pod.yaml > my-pod-signed.yaml
 
-# Verify a signed pod (requires the signing cert)
-./scripts/sign-pod.sh verify-spec my-pod-signed.yaml
-
 # Fetch the signing certificate from signing-server
 ./scripts/sign-pod.sh get-cert > signing-cert.pem
 ```
 
-The sign-pod.sh script automatically connects to the signing-server in the cluster via kubectl port-forward. You can also set `SIGNING_SERVER_URL` to point directly to a signing-server instance.
+The sign-pod.sh script connects to the signing-server at `SIGNING_SERVER_URL` (default: `http://localhost:8080`). When using the kind deployment, the signing-server runs as a local Docker container on port 8080.
+
+#### Policy Schema
+
+Instead of signing the full pod spec (which changes when Kubernetes adds defaults), kubelet-proxy uses a **policy-based approach**. The `sign-pod.sh` script extracts security-relevant fields from the pod spec into a deterministic policy JSON, which is then signed and verified.
+
+##### Policy Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `allowedImages` | `string[]` | List of container images from `containers` and `initContainers` |
+| `allowHostNetwork` | `boolean` | Present and `true` if pod spec has `hostNetwork: true` |
+| `allowHostPID` | `boolean` | Present and `true` if pod spec has `hostPID: true` |
+| `allowHostIPC` | `boolean` | Present and `true` if pod spec has `hostIPC: true` |
+| `allowPrivileged` | `boolean` | Present and `true` if any container has `securityContext.privileged: true` |
+| `allowedCapabilities` | `string[]` | Sorted list of Linux capabilities from `securityContext.capabilities.add` across all containers |
+| `allowedNodeSelectors` | `object` | Key-value pairs from pod spec `nodeSelector` |
+
+##### Policy Generation Rules
+
+- **Omitted fields**: Fields are only included in the policy if they have non-empty or non-false values
+- **Deterministic serialization**: The policy is serialized as compact JSON with sorted keys (no whitespace) to ensure consistent signatures
+- **Base64 encoding**: The policy JSON is base64-encoded before signing and stored in the annotation
+
+##### Example Policy
+
+For a pod with:
+```yaml
+spec:
+  containers:
+    - name: app
+      image: nginx:latest
+      securityContext:
+        privileged: true
+        capabilities:
+          add: ["NET_ADMIN", "SYS_TIME"]
+  hostNetwork: true
+  nodeSelector:
+    kubernetes.io/os: linux
+```
+
+The generated policy would be:
+```json
+{
+  "allowHostNetwork": true,
+  "allowPrivileged": true,
+  "allowedCapabilities": ["NET_ADMIN", "SYS_TIME"],
+  "allowedImages": ["nginx:latest"],
+  "allowedNodeSelectors": {"kubernetes.io/os": "linux"}
+}
+```
+
+##### Viewing a Policy
+
+Use `show-policy` to see what policy would be generated without signing:
+
+```bash
+./scripts/sign-pod.sh show-policy my-pod.yaml
+```
 
 #### Signature Annotation
 
-The signature is stored in the pod annotation:
+The policy and signature are stored in pod annotations:
 
 ```yaml
 metadata:
   annotations:
-    kubelet-proxy.io/signature: "MEUCIQDx...base64-encoded-signature..."
+    kubelet-proxy.io/policy: "eyJhbGxvd2VkSW1hZ2VzIjpbIm5naW54OmxhdGVzdCJdfQ=="  # base64-encoded policy JSON
+    kubelet-proxy.io/signature: "MEUCIQDx...base64-encoded-signature..."           # signature of the policy
 ```
+
+The kubelet-proxy verifies pods by:
+1. Extracting the `kubelet-proxy.io/policy` annotation (base64-encoded policy)
+2. Extracting the `kubelet-proxy.io/signature` annotation
+3. Verifying the signature against the policy using the configured signing certificate
+4. Optionally validating that the pod spec matches the claimed policy
 
 #### Supported Key Types
 
