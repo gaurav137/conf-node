@@ -7,7 +7,8 @@ This directory contains policy JSON files used for testing kubelet-proxy pod pol
 | File | Description | Used In Test |
 |------|-------------|--------------|
 | `nginx-pod-policy.json` | Policy allowing nginx:latest container on signed-workloads nodes | Signed pod test (TEST 1), Bad signature test (TEST 3), Image mismatch test (TEST 4) |
-| `busybox-pod-policy.json` | Policy allowing busybox:latest container | Reference only |
+| `busybox-pod-policy.json` | Policy allowing busybox:latest with sleep command | Reference only |
+| `full-policy-pod-policy.json` | Policy with command, args, env, and volumeMounts | Full policy test (TEST 5), Command mismatch (TEST 6), Env mismatch (TEST 7), Volume mismatch (TEST 8) |
 
 ## Policy Schema
 
@@ -45,12 +46,16 @@ The test script (`scripts/kind/test-pod-policies.sh`) loads these policy files a
 
 ## Test Scenarios
 
-| Test | Policy Used | Pod Image | Expected |
-|------|-------------|-----------|----------|
-| TEST 1: Signed pod | `nginx-pod-policy.json` | nginx:latest | ALLOWED |
+| Test | Policy Used | Pod Spec | Expected |
+|------|-------------|----------|----------|
+| TEST 1: Signed pod | `nginx-pod-policy.json` | nginx:latest (matches) | ALLOWED |
 | TEST 2: Unsigned pod | (none) | nginx:latest | REJECTED |
-| TEST 3: Bad signature | `nginx-pod-policy.json` | nginx:latest | REJECTED |
-| TEST 4: Image mismatch | `nginx-pod-policy.json` | busybox:latest | REJECTED |
+| TEST 3: Bad signature | `nginx-pod-policy.json` | nginx:latest (invalid sig) | REJECTED |
+| TEST 4: Image mismatch | `nginx-pod-policy.json` | busybox:latest (mismatch) | REJECTED |
+| TEST 5: Full policy pod | `full-policy-pod-policy.json` | All fields match | ALLOWED |
+| TEST 6: Command mismatch | `full-policy-pod-policy.json` | command: /bin/sh (expects /bin/myapp) | REJECTED |
+| TEST 7: Env mismatch | `full-policy-pod-policy.json` | APP_ENV=development (expects production) | REJECTED |
+| TEST 8: Volume mismatch | `full-policy-pod-policy.json` | mountPath: /etc/config (expects /etc/app) | REJECTED |
 
 ## Running Tests
 

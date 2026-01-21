@@ -29,6 +29,10 @@ TEST1_RESULT=""
 TEST2_RESULT=""
 TEST3_RESULT=""
 TEST4_RESULT=""
+TEST5_RESULT=""
+TEST6_RESULT=""
+TEST7_RESULT=""
+TEST8_RESULT=""
 
 check_prerequisites() {
     log_info "Checking prerequisites..."
@@ -141,6 +145,12 @@ cleanup_test_resources() {
     kubectl delete pod test-unsigned --ignore-not-found=true 2>/dev/null || true
     kubectl delete pod test-bad-sig --ignore-not-found=true 2>/dev/null || true
     kubectl delete pod test-image-mismatch --ignore-not-found=true 2>/dev/null || true
+    kubectl delete pod test-full-policy --ignore-not-found=true 2>/dev/null || true
+    kubectl delete pod test-command-mismatch --ignore-not-found=true 2>/dev/null || true
+    kubectl delete pod test-env-mismatch --ignore-not-found=true 2>/dev/null || true
+    kubectl delete pod test-volume-mismatch --ignore-not-found=true 2>/dev/null || true
+    kubectl delete configmap test-config --ignore-not-found=true 2>/dev/null || true
+    kubectl delete pvc test-data --ignore-not-found=true 2>/dev/null || true
     sleep 2
 }
 
@@ -433,10 +443,419 @@ EOF
     echo ""
 }
 
+# Helper to create test volumes (ConfigMap and PVC)
+create_test_volumes() {
+    log_info "Creating test volumes (ConfigMap and emptyDir)..."
+    
+    # Create a ConfigMap for the config volume
+    kubectl apply -f - <<EOF
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: test-config
+  namespace: default
+data:
+  config.yaml: |
+    setting: value
+EOF
+}
+
+test_full_policy_pod() {
+    log_test "TEST 5: Creating a pod with FULL POLICY (command, args, env, volumeMounts) - should be ALLOWED..."
+    echo ""
+    
+    # Ensure test volumes exist
+    create_test_volumes
+    
+    # Load the full policy from the checked-in file
+    local policy_file="$TEST_POLICIES_DIR/full-policy-pod-policy.json"
+    if [[ ! -f "$policy_file" ]]; then
+        log_error "Policy file not found: $policy_file"
+        TEST5_RESULT="FAILED"
+        return
+    fi
+    
+    log_info "Loading policy from $policy_file"
+    local policy_json
+    policy_json=$(load_policy_json "$policy_file")
+    
+    # Base64 encode the policy
+    local policy_base64
+    policy_base64=$(printf '%s' "$policy_json" | base64 -w 0)
+    
+    log_info "Policy: $policy_json"
+    
+    # Sign the policy
+    log_info "Signing policy using signing-server..."
+    local signature
+    signature=$(sign_policy "$policy_base64")
+    
+    if [[ -z "$signature" || "$signature" == "null" ]]; then
+        log_error "Failed to sign policy"
+        TEST5_RESULT="FAILED"
+        return
+    fi
+    
+    # Create the signed pod YAML with all fields matching policy
+    cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: Pod
+metadata:
+  name: test-full-policy
+  namespace: default
+  annotations:
+    kubelet-proxy.io/policy: "$policy_base64"
+    kubelet-proxy.io/signature: "$signature"
+spec:
+  nodeSelector:
+    node-type: signed-workloads
+  tolerations:
+  - key: "signed-workloads"
+    operator: "Equal"
+    value: "required"
+    effect: "NoSchedule"
+  volumes:
+  - name: config
+    configMap:
+      name: test-config
+  - name: data
+    emptyDir: {}
+  containers:
+  - name: app
+    image: busybox:latest
+    command: ["/bin/myapp"]
+    args: ["--config=/etc/app/config.yaml", "--verbose"]
+    env:
+    - name: APP_ENV
+      value: "production"
+    - name: LOG_LEVEL
+      value: "debug"
+    volumeMounts:
+    - name: config
+      mountPath: /etc/app
+      readOnly: true
+    - name: data
+      mountPath: /data
+      readOnly: false
+EOF
+    
+    log_info "Waiting for pod to be scheduled..."
+    sleep 10
+    
+    echo ""
+    echo "Pod status:"
+    kubectl get pod test-full-policy -o wide
+    echo ""
+    
+    # Check pod status
+    POD_STATUS=$(kubectl get pod test-full-policy -o jsonpath='{.status.phase}')
+    POD_REASON=$(kubectl get pod test-full-policy -o jsonpath='{.status.reason}' 2>/dev/null || echo "")
+    if [[ "$POD_STATUS" == "Running" || "$POD_STATUS" == "Pending" || "$POD_STATUS" == "ContainerCreating" ]]; then
+        # For busybox with fake command, it will fail but should be admitted first
+        if [[ "$POD_REASON" != "NodeAdmissionRejected" ]]; then
+            log_info "✓ TEST 5 PASSED: Full policy pod was allowed (status: $POD_STATUS)"
+            TEST5_RESULT="PASSED"
+        else
+            log_error "✗ TEST 5 FAILED: Full policy pod was rejected"
+            kubectl describe pod test-full-policy
+            TEST5_RESULT="FAILED"
+        fi
+    elif [[ "$POD_STATUS" == "Failed" && "$POD_REASON" != "NodeAdmissionRejected" ]]; then
+        # Pod failed for other reasons (e.g., command not found) - that's OK, it was admitted
+        log_info "✓ TEST 5 PASSED: Full policy pod was admitted (failed later due to: $POD_REASON)"
+        TEST5_RESULT="PASSED"
+    else
+        log_error "✗ TEST 5 FAILED: Full policy pod status is $POD_STATUS (reason: $POD_REASON)"
+        kubectl describe pod test-full-policy
+        TEST5_RESULT="FAILED"
+    fi
+    echo ""
+}
+
+test_command_mismatch_pod() {
+    log_test "TEST 6: Creating a pod with MISMATCHED COMMAND (should be REJECTED)..."
+    echo ""
+    
+    # Load the full policy (expects command: ["/bin/myapp"])
+    local policy_file="$TEST_POLICIES_DIR/full-policy-pod-policy.json"
+    local policy_json
+    policy_json=$(load_policy_json "$policy_file")
+    local policy_base64
+    policy_base64=$(printf '%s' "$policy_json" | base64 -w 0)
+    
+    # Sign the policy
+    local signature
+    signature=$(sign_policy "$policy_base64")
+    
+    if [[ -z "$signature" || "$signature" == "null" ]]; then
+        log_error "Failed to sign policy"
+        TEST6_RESULT="FAILED"
+        return
+    fi
+    
+    log_info "Creating pod with different command (policy expects /bin/myapp, using /bin/sh)..."
+    
+    # Create pod with DIFFERENT command than policy
+    cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: Pod
+metadata:
+  name: test-command-mismatch
+  namespace: default
+  annotations:
+    kubelet-proxy.io/policy: "$policy_base64"
+    kubelet-proxy.io/signature: "$signature"
+spec:
+  nodeSelector:
+    node-type: signed-workloads
+  tolerations:
+  - key: "signed-workloads"
+    operator: "Equal"
+    value: "required"
+    effect: "NoSchedule"
+  volumes:
+  - name: config
+    configMap:
+      name: test-config
+  - name: data
+    emptyDir: {}
+  containers:
+  - name: app
+    image: busybox:latest
+    command: ["/bin/sh"]  # MISMATCH: policy expects /bin/myapp
+    args: ["--config=/etc/app/config.yaml", "--verbose"]
+    env:
+    - name: APP_ENV
+      value: "production"
+    - name: LOG_LEVEL
+      value: "debug"
+    volumeMounts:
+    - name: config
+      mountPath: /etc/app
+      readOnly: true
+    - name: data
+      mountPath: /data
+      readOnly: false
+EOF
+    
+    log_info "Waiting for admission decision..."
+    sleep 5
+    
+    echo ""
+    echo "Pod status:"
+    kubectl get pod test-command-mismatch -o wide 2>/dev/null || echo "Pod not found"
+    echo ""
+    
+    POD_STATUS=$(kubectl get pod test-command-mismatch -o jsonpath='{.status.phase}' 2>/dev/null || echo "NotFound")
+    POD_REASON=$(kubectl get pod test-command-mismatch -o jsonpath='{.status.reason}' 2>/dev/null || echo "")
+    POD_MESSAGE=$(kubectl get pod test-command-mismatch -o jsonpath='{.status.message}' 2>/dev/null || echo "")
+    
+    if [[ "$POD_STATUS" == "Failed" && "$POD_REASON" == "NodeAdmissionRejected" ]]; then
+        log_info "✓ TEST 6 PASSED: Pod with command mismatch was REJECTED"
+        echo ""
+        kubectl describe pod test-command-mismatch | grep -A3 "Message:"
+        TEST6_RESULT="PASSED"
+    elif [[ "$POD_STATUS" == "Failed" ]]; then
+        log_warn "? TEST 6 PARTIAL: Pod is Failed but reason is '$POD_REASON'"
+        TEST6_RESULT="PARTIAL"
+    else
+        log_error "✗ TEST 6 FAILED: Pod with command mismatch was NOT rejected (status: $POD_STATUS)"
+        kubectl describe pod test-command-mismatch
+        TEST6_RESULT="FAILED"
+    fi
+    echo ""
+}
+
+test_env_mismatch_pod() {
+    log_test "TEST 7: Creating a pod with MISMATCHED ENV (should be REJECTED)..."
+    echo ""
+    
+    # Load the full policy
+    local policy_file="$TEST_POLICIES_DIR/full-policy-pod-policy.json"
+    local policy_json
+    policy_json=$(load_policy_json "$policy_file")
+    local policy_base64
+    policy_base64=$(printf '%s' "$policy_json" | base64 -w 0)
+    
+    # Sign the policy
+    local signature
+    signature=$(sign_policy "$policy_base64")
+    
+    if [[ -z "$signature" || "$signature" == "null" ]]; then
+        log_error "Failed to sign policy"
+        TEST7_RESULT="FAILED"
+        return
+    fi
+    
+    log_info "Creating pod with different env (policy expects APP_ENV=production, using APP_ENV=development)..."
+    
+    # Create pod with DIFFERENT env than policy
+    cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: Pod
+metadata:
+  name: test-env-mismatch
+  namespace: default
+  annotations:
+    kubelet-proxy.io/policy: "$policy_base64"
+    kubelet-proxy.io/signature: "$signature"
+spec:
+  nodeSelector:
+    node-type: signed-workloads
+  tolerations:
+  - key: "signed-workloads"
+    operator: "Equal"
+    value: "required"
+    effect: "NoSchedule"
+  volumes:
+  - name: config
+    configMap:
+      name: test-config
+  - name: data
+    emptyDir: {}
+  containers:
+  - name: app
+    image: busybox:latest
+    command: ["/bin/myapp"]
+    args: ["--config=/etc/app/config.yaml", "--verbose"]
+    env:
+    - name: APP_ENV
+      value: "development"  # MISMATCH: policy expects "production"
+    - name: LOG_LEVEL
+      value: "debug"
+    volumeMounts:
+    - name: config
+      mountPath: /etc/app
+      readOnly: true
+    - name: data
+      mountPath: /data
+      readOnly: false
+EOF
+    
+    log_info "Waiting for admission decision..."
+    sleep 5
+    
+    echo ""
+    echo "Pod status:"
+    kubectl get pod test-env-mismatch -o wide 2>/dev/null || echo "Pod not found"
+    echo ""
+    
+    POD_STATUS=$(kubectl get pod test-env-mismatch -o jsonpath='{.status.phase}' 2>/dev/null || echo "NotFound")
+    POD_REASON=$(kubectl get pod test-env-mismatch -o jsonpath='{.status.reason}' 2>/dev/null || echo "")
+    
+    if [[ "$POD_STATUS" == "Failed" && "$POD_REASON" == "NodeAdmissionRejected" ]]; then
+        log_info "✓ TEST 7 PASSED: Pod with env mismatch was REJECTED"
+        echo ""
+        kubectl describe pod test-env-mismatch | grep -A3 "Message:"
+        TEST7_RESULT="PASSED"
+    elif [[ "$POD_STATUS" == "Failed" ]]; then
+        log_warn "? TEST 7 PARTIAL: Pod is Failed but reason is '$POD_REASON'"
+        TEST7_RESULT="PARTIAL"
+    else
+        log_error "✗ TEST 7 FAILED: Pod with env mismatch was NOT rejected (status: $POD_STATUS)"
+        kubectl describe pod test-env-mismatch
+        TEST7_RESULT="FAILED"
+    fi
+    echo ""
+}
+
+test_volume_mismatch_pod() {
+    log_test "TEST 8: Creating a pod with MISMATCHED VOLUME MOUNT (should be REJECTED)..."
+    echo ""
+    
+    # Load the full policy (expects mountPath: /etc/app and /data)
+    local policy_file="$TEST_POLICIES_DIR/full-policy-pod-policy.json"
+    local policy_json
+    policy_json=$(load_policy_json "$policy_file")
+    local policy_base64
+    policy_base64=$(printf '%s' "$policy_json" | base64 -w 0)
+    
+    # Sign the policy
+    local signature
+    signature=$(sign_policy "$policy_base64")
+    
+    if [[ -z "$signature" || "$signature" == "null" ]]; then
+        log_error "Failed to sign policy"
+        TEST8_RESULT="FAILED"
+        return
+    fi
+    
+    log_info "Creating pod with different volume mount path (policy expects /etc/app, using /etc/config)..."
+    
+    # Create pod with DIFFERENT volume mount path than policy
+    cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: Pod
+metadata:
+  name: test-volume-mismatch
+  namespace: default
+  annotations:
+    kubelet-proxy.io/policy: "$policy_base64"
+    kubelet-proxy.io/signature: "$signature"
+spec:
+  nodeSelector:
+    node-type: signed-workloads
+  tolerations:
+  - key: "signed-workloads"
+    operator: "Equal"
+    value: "required"
+    effect: "NoSchedule"
+  volumes:
+  - name: config
+    configMap:
+      name: test-config
+  - name: data
+    emptyDir: {}
+  containers:
+  - name: app
+    image: busybox:latest
+    command: ["/bin/myapp"]
+    args: ["--config=/etc/app/config.yaml", "--verbose"]
+    env:
+    - name: APP_ENV
+      value: "production"
+    - name: LOG_LEVEL
+      value: "debug"
+    volumeMounts:
+    - name: config
+      mountPath: /etc/config  # MISMATCH: policy expects /etc/app
+      readOnly: true
+    - name: data
+      mountPath: /data
+      readOnly: false
+EOF
+    
+    log_info "Waiting for admission decision..."
+    sleep 5
+    
+    echo ""
+    echo "Pod status:"
+    kubectl get pod test-volume-mismatch -o wide 2>/dev/null || echo "Pod not found"
+    echo ""
+    
+    POD_STATUS=$(kubectl get pod test-volume-mismatch -o jsonpath='{.status.phase}' 2>/dev/null || echo "NotFound")
+    POD_REASON=$(kubectl get pod test-volume-mismatch -o jsonpath='{.status.reason}' 2>/dev/null || echo "")
+    
+    if [[ "$POD_STATUS" == "Failed" && "$POD_REASON" == "NodeAdmissionRejected" ]]; then
+        log_info "✓ TEST 8 PASSED: Pod with volume mount mismatch was REJECTED"
+        echo ""
+        kubectl describe pod test-volume-mismatch | grep -A3 "Message:"
+        TEST8_RESULT="PASSED"
+    elif [[ "$POD_STATUS" == "Failed" ]]; then
+        log_warn "? TEST 8 PARTIAL: Pod is Failed but reason is '$POD_REASON'"
+        TEST8_RESULT="PARTIAL"
+    else
+        log_error "✗ TEST 8 FAILED: Pod with volume mount mismatch was NOT rejected (status: $POD_STATUS)"
+        kubectl describe pod test-volume-mismatch
+        TEST8_RESULT="FAILED"
+    fi
+    echo ""
+}
+
 show_proxy_logs() {
     log_test "Recent kubelet-proxy logs (policy verification)..."
     echo ""
-    docker exec "$WORKER_NODE_NAME" journalctl -u kubelet-proxy --no-pager -n 40 | grep -E "(policy|Policy|POLICY|admitted|rejected|Rejected)" | tail -20 || true
+    docker exec "$WORKER_NODE_NAME" journalctl -u kubelet-proxy --no-pager -n 60 | grep -E "(policy|Policy|POLICY|admitted|rejected|Rejected|command|env|volume)" | tail -30 || true
     echo ""
 }
 
@@ -455,6 +874,10 @@ run_tests() {
     test_unsigned_pod
     test_bad_signature_pod
     test_image_mismatch_pod
+    test_full_policy_pod
+    test_command_mismatch_pod
+    test_env_mismatch_pod
+    test_volume_mismatch_pod
     show_proxy_logs
     
     echo ""
@@ -510,6 +933,50 @@ run_tests() {
         failed=$((failed + 1))
     fi
     
+    if [[ "$TEST5_RESULT" == "PASSED" ]]; then
+        echo -e "  ${GREEN}✓${NC} TEST 5: Full policy pod allowed  - PASSED"
+        passed=$((passed + 1))
+    elif [[ "$TEST5_RESULT" == "PARTIAL" ]]; then
+        echo -e "  ${YELLOW}?${NC} TEST 5: Full policy pod allowed  - PARTIAL"
+        partial=$((partial + 1))
+    else
+        echo -e "  ${RED}✗${NC} TEST 5: Full policy pod allowed  - FAILED"
+        failed=$((failed + 1))
+    fi
+    
+    if [[ "$TEST6_RESULT" == "PASSED" ]]; then
+        echo -e "  ${GREEN}✓${NC} TEST 6: Command mismatch rejected - PASSED"
+        passed=$((passed + 1))
+    elif [[ "$TEST6_RESULT" == "PARTIAL" ]]; then
+        echo -e "  ${YELLOW}?${NC} TEST 6: Command mismatch rejected - PARTIAL"
+        partial=$((partial + 1))
+    else
+        echo -e "  ${RED}✗${NC} TEST 6: Command mismatch rejected - FAILED"
+        failed=$((failed + 1))
+    fi
+    
+    if [[ "$TEST7_RESULT" == "PASSED" ]]; then
+        echo -e "  ${GREEN}✓${NC} TEST 7: Env mismatch rejected    - PASSED"
+        passed=$((passed + 1))
+    elif [[ "$TEST7_RESULT" == "PARTIAL" ]]; then
+        echo -e "  ${YELLOW}?${NC} TEST 7: Env mismatch rejected    - PARTIAL"
+        partial=$((partial + 1))
+    else
+        echo -e "  ${RED}✗${NC} TEST 7: Env mismatch rejected    - FAILED"
+        failed=$((failed + 1))
+    fi
+    
+    if [[ "$TEST8_RESULT" == "PASSED" ]]; then
+        echo -e "  ${GREEN}✓${NC} TEST 8: Volume mismatch rejected - PASSED"
+        passed=$((passed + 1))
+    elif [[ "$TEST8_RESULT" == "PARTIAL" ]]; then
+        echo -e "  ${YELLOW}?${NC} TEST 8: Volume mismatch rejected - PARTIAL"
+        partial=$((partial + 1))
+    else
+        echo -e "  ${RED}✗${NC} TEST 8: Volume mismatch rejected - FAILED"
+        failed=$((failed + 1))
+    fi
+    
     echo ""
     echo "----------------------------------------"
     if [[ $failed -eq 0 && $partial -eq 0 ]]; then
@@ -528,7 +995,7 @@ run_tests() {
     echo "  docker exec $WORKER_NODE_NAME journalctl -u kubelet-proxy -f"
     echo ""
     echo "To clean up test resources:"
-    echo "  kubectl delete pod test-signed test-unsigned test-bad-sig test-image-mismatch"
+    echo "  kubectl delete pod test-signed test-unsigned test-bad-sig test-image-mismatch test-full-policy test-command-mismatch test-env-mismatch test-volume-mismatch"
     echo ""
     
     # Exit with error if any tests failed

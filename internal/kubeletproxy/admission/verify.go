@@ -439,6 +439,12 @@ func (c *PolicyVerificationController) checkVolumeMounts(container map[string]in
 				if r, ok := mountMap["readOnly"].(bool); ok {
 					mount.ReadOnly = r
 				}
+				// Skip Kubernetes auto-injected service account token mounts
+				// These are injected by the kubelet and not part of the original pod spec
+				if strings.HasPrefix(mount.Name, "kube-api-access-") ||
+					mount.MountPath == "/var/run/secrets/kubernetes.io/serviceaccount" {
+					continue
+				}
 				podMounts = append(podMounts, mount)
 			}
 		}
