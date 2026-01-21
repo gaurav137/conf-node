@@ -2,6 +2,41 @@
 
 A collection of Go binaries for confidential inferencing on AKS Flex nodes.
 
+## Installation on VM Nodes
+
+Use the `install.sh` script with a JSON configuration file:
+
+```bash
+# Create a configuration file
+cat > kubelet-proxy-config.json <<EOF
+{
+  "signingCertUrl": "https://signing-server.example.com/signingcert"
+}
+EOF
+
+# Download and run the installer
+curl -fsSL https://raw.githubusercontent.com/gaurav137/conf-inferencing/main/scripts/install.sh | sudo bash -s -- --config kubelet-proxy-config.json
+```
+
+### Configuration Options
+
+| JSON Field | Description |
+|------------|-------------|
+| `signingCertUrl` | URL to download the signing certificate from |
+| `signingCertFile` | Path to local signing certificate file (alternative to URL) |
+| `version` | Kubelet-proxy version to install (default: latest from GitHub releases) |
+| `githubRepo` | GitHub repository (default: gaurav137/conf-inferencing) |
+| `proxyListenAddr` | Proxy listen address (default: 127.0.0.1:6444) |
+| `skipKubeletRestart` | Don't restart kubelet after installation (default: false) |
+
+### Uninstalling
+
+To remove kubelet-proxy and restore the original kubelet configuration:
+
+```bash
+sudo ./scripts/uninstall.sh
+```
+
 ## Binaries
 
 - **kubelet-proxy** - Kubernetes kubelet proxy that intercepts API server communication for pod admission control
@@ -375,41 +410,6 @@ curl http://localhost:8080/signingcert > signing-cert.pem
 ├── Makefile
 ├── go.mod
 └── README.md
-```
-
-## Installation on VM Nodes
-
-For production deployments on VM-based Kubernetes worker nodes, use the `install.sh` script with a JSON configuration file:
-
-```bash
-# Create a configuration file
-cat > kubelet-proxy-config.json <<EOF
-{
-  "signingCertUrl": "https://signing-server.example.com/signingcert"
-}
-EOF
-
-# Download and run the installer
-curl -fsSL https://raw.githubusercontent.com/gaurav137/conf-inferencing/main/scripts/install.sh | sudo bash -s -- --config kubelet-proxy-config.json
-```
-
-### Configuration Options
-
-| JSON Field | Description |
-|------------|-------------|
-| `signingCertUrl` | URL to download the signing certificate from |
-| `signingCertFile` | Path to local signing certificate file (alternative to URL) |
-| `version` | Kubelet-proxy version to install (default: latest from GitHub releases) |
-| `githubRepo` | GitHub repository (default: gaurav137/conf-inferencing) |
-| `proxyListenAddr` | Proxy listen address (default: 127.0.0.1:6444) |
-| `skipKubeletRestart` | Don't restart kubelet after installation (default: false) |
-
-### Uninstalling
-
-To remove kubelet-proxy and restore the original kubelet configuration:
-
-```bash
-sudo ./scripts/uninstall.sh
 ```
 
 ## Testing with Kind

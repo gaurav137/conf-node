@@ -10,7 +10,6 @@
 #
 # Options:
 #   --skip-kubelet-restart    Don't restart kubelet after uninstallation
-#   --dry-run                 Print what would be done without making changes
 #   --help                    Show this help message
 #
 
@@ -36,7 +35,6 @@ KUBELET_DROPIN_DIR="/etc/systemd/system/kubelet.service.d"
 KUBELET_DROPIN_FILE="$KUBELET_DROPIN_DIR/20-kubelet-proxy.conf"
 
 SKIP_KUBELET_RESTART=false
-DRY_RUN=false
 
 usage() {
     head -20 "$0" | grep -E "^#" | sed 's/^# \?//'
@@ -48,10 +46,6 @@ parse_args() {
         case $1 in
             --skip-kubelet-restart)
                 SKIP_KUBELET_RESTART=true
-                shift
-                ;;
-            --dry-run)
-                DRY_RUN=true
                 shift
                 ;;
             --help|-h)
@@ -79,20 +73,6 @@ check_prerequisites() {
 
 uninstall() {
     log_step "Uninstalling kubelet-proxy..."
-
-    if [[ "$DRY_RUN" == "true" ]]; then
-        log_info "[DRY-RUN] Would perform the following actions:"
-        log_info "  - Stop and disable kubelet-proxy service"
-        log_info "  - Remove kubelet drop-in: $KUBELET_DROPIN_FILE"
-        log_info "  - Remove binary: $PROXY_BIN_PATH"
-        log_info "  - Remove service file: /etc/systemd/system/kubelet-proxy.service"
-        log_info "  - Remove proxy kubeconfig: $PROXY_KUBECONFIG"
-        log_info "  - Remove cert directory: $PROXY_CERT_DIR"
-        if [[ "$SKIP_KUBELET_RESTART" == "false" ]]; then
-            log_info "  - Restart kubelet"
-        fi
-        return
-    fi
 
     # Stop and disable kubelet-proxy
     if systemctl is-active --quiet kubelet-proxy 2>/dev/null; then
@@ -192,10 +172,7 @@ main() {
 
     check_prerequisites
     uninstall
-
-    if [[ "$DRY_RUN" != "true" ]]; then
-        print_success
-    fi
+    print_success
 }
 
 main "$@"
