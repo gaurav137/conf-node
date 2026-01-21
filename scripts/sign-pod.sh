@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-# Script to sign pod policies using the signing-server for kubelet-proxy signature verification
+# Script to sign pod policies using the signing-server for kubelet-proxy pod policy verification
 # Instead of signing the full pod spec (which changes when Kubernetes adds defaults),
 # we generate a policy from the pod spec and sign that policy.
 

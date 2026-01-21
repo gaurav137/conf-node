@@ -80,11 +80,11 @@ check_proxy_status() {
     
     if docker exec "$WORKER_NODE_NAME" systemctl is-active --quiet kubelet-proxy; then
         log_info "kubelet-proxy is RUNNING"
-        # Check if signature verification is enabled
-        if docker exec "$WORKER_NODE_NAME" cat /etc/systemd/system/kubelet-proxy.service | grep -q "signature-verification-cert"; then
-            log_info "Signature verification is ENABLED"
+        # Check if pod policy verification is enabled
+        if docker exec "$WORKER_NODE_NAME" cat /etc/systemd/system/kubelet-proxy.service | grep -q "policy-verification-cert"; then
+            log_info "Pod policy verification is ENABLED"
         else
-            log_error "Signature verification is NOT enabled in kubelet-proxy config"
+            log_error "Pod policy verification is NOT enabled in kubelet-proxy config"
             exit 1
         fi
     else
@@ -357,16 +357,16 @@ EOF
 }
 
 show_proxy_logs() {
-    log_test "Recent kubelet-proxy logs (signature verification)..."
+    log_test "Recent kubelet-proxy logs (policy verification)..."
     echo ""
-    docker exec "$WORKER_NODE_NAME" journalctl -u kubelet-proxy --no-pager -n 40 | grep -E "(signature|Signature|SIGNATURE|admitted|rejected|Rejected)" | tail -20 || true
+    docker exec "$WORKER_NODE_NAME" journalctl -u kubelet-proxy --no-pager -n 40 | grep -E "(policy|Policy|POLICY|admitted|rejected|Rejected)" | tail -20 || true
     echo ""
 }
 
 run_tests() {
     echo ""
     echo "========================================"
-    echo "  Signature Verification Tests"
+    echo "  Pod Policy Verification Tests"
     echo "========================================"
     echo ""
     

@@ -19,10 +19,10 @@ type Config struct {
 	LogRequests    bool
 	LogPodPayloads bool
 
-	// SignatureVerificationCert is the path to the public key certificate
-	// used to verify pod spec signatures. If set, pods must have a valid
+	// PolicyVerificationCert is the path to the public key certificate
+	// used to verify pod policy signatures. If set, pods must have a valid
 	// signature in the annotation "kubelet-proxy.io/signature"
-	SignatureVerificationCert string
+	PolicyVerificationCert string
 
 	// LoadedKubeConfig contains the parsed kubeconfig data (populated after loading)
 	LoadedKubeConfig *LoadedKubeConfig

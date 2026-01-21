@@ -49,7 +49,7 @@ The kubelet-proxy is a binary that runs on a Kubernetes node, intercepting HTTP 
 └─────────────┘      └──────────────┘      └─────────────┘
                             │
                             ▼
-                     Signature Verification
+                     Pod Policy Verification
                      (accept/reject pod)
 ```
 
@@ -89,7 +89,7 @@ This approach:
 
 - **Kubernetes-Native Rejection**: Rejects pods by patching status to Failed (same as kubelet)
 - **Response Interception**: Intercepts pod list/watch responses from the API server  
-- **Signature Verification**: Cryptographic verification of pod spec signatures
+- **Pod Policy Verification**: Cryptographic verification of pod policy signatures
 - **Kubeconfig Support**: Uses standard kubeconfig file for API server connection
 - **Watch Stream Support**: Properly handles Kubernetes watch streams
 - **Logging**: Detailed logging of all requests and admission decisions
@@ -104,7 +104,7 @@ This approach:
   --listen-addr :6443 \
   --tls-cert /path/to/server.crt \
   --tls-key /path/to/server.key \
-  --signature-verification-cert /path/to/signing-cert.pem \
+  --policy-verification-cert /path/to/signing-cert.pem \
   --log-requests
 ```
 
@@ -125,13 +125,13 @@ On the node, configure the kubelet to connect to kubelet-proxy instead of the AP
 | `--listen-addr` | `:6443` | Address to listen on for kubelet connections |
 | `--tls-cert` | | Path to TLS certificate for serving |
 | `--tls-key` | | Path to TLS key for serving |
-| `--signature-verification-cert` | | Path to certificate for pod spec signature verification |
+| `--policy-verification-cert` | | Path to certificate for pod policy verification |
 | `--log-requests` | `true` | Log all proxied requests |
 | `--log-pod-payloads` | `false` | Log full pod JSON payloads |
 
-### Signature Verification
+### Pod Policy Verification
 
-kubelet-proxy can verify cryptographic signatures on pod specs to ensure only authorized workloads run on a node. When enabled, pods must have a valid signature annotation or they will be rejected.
+kubelet-proxy can verify cryptographic signatures on pod policies to ensure only authorized workloads run on a node. When enabled, pods must have a valid policy and signature annotation or they will be rejected.
 
 #### How It Works
 
@@ -141,14 +141,14 @@ kubelet-proxy can verify cryptographic signatures on pod specs to ensure only au
 4. The base64-encoded signature is stored in the `kubelet-proxy.io/signature` annotation
 5. On the node, kubelet-proxy verifies the signature using the public key from the provided certificate
 
-#### Enabling Signature Verification
+#### Enabling Pod Policy Verification
 
 Provide a certificate containing the public key:
 
 ```bash
 ./bin/kubelet-proxy \
   --kubeconfig /path/to/kubeconfig \
-  --signature-verification-cert /path/to/signing-cert.pem
+  --policy-verification-cert /path/to/signing-cert.pem
 ```
 
 #### Signing Pods
@@ -342,7 +342,7 @@ curl http://localhost:8080/signingcert > signing-cert.pem
 │       │   ├── admission.go    # Core admission types
 │       │   ├── chain.go        # Chain multiple controllers
 │       │   ├── logging.go      # Logging controller
-│       │   └── signature.go    # Signature verification controller
+│       │   └── verify.go       # Pod policy verification controller
 │       ├── config.go           # Configuration
 │       ├── kubeconfig.go       # Kubeconfig parser
 │       └── proxy.go            # HTTP proxy implementation
@@ -370,7 +370,7 @@ Deploy kubelet-proxy to a kind cluster with signing-server running locally:
 # This also starts signing-server as a local Docker container
 make deploy-kind
 
-# Run signature verification tests
+# Run pod policy verification tests
 make test-kind
 
 # Tear down cluster and stop signing-server
@@ -381,5 +381,5 @@ The kind deployment:
 - Creates a 2-node cluster (control-plane + worker)
 - Runs signing-server as a local Docker container on port 8080
 - Fetches the signing certificate from signing-server
-- Installs kubelet-proxy on the worker node with signature verification enabled
+- Installs kubelet-proxy on the worker node with pod policy verification enabled
 - Configures kubelet to route through the proxy

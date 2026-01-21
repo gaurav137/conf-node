@@ -58,16 +58,16 @@ type Policy struct {
 	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
 }
 
-// SignatureVerificationController verifies pod policy signatures
-type SignatureVerificationController struct {
+// PolicyVerificationController verifies pod policy signatures
+type PolicyVerificationController struct {
 	publicKey crypto.PublicKey
 	certPath  string
 	logger    *log.Logger
 }
 
-// NewSignatureVerificationController creates a new signature verification controller
-func NewSignatureVerificationController(certPath string) (*SignatureVerificationController, error) {
-	logger := log.New(os.Stdout, "[signature-verification] ", log.LstdFlags|log.Lmicroseconds)
+// NewPolicyVerificationController creates a new pod policy verification controller
+func NewPolicyVerificationController(certPath string) (*PolicyVerificationController, error) {
+	logger := log.New(os.Stdout, "[policy-verification] ", log.LstdFlags|log.Lmicroseconds)
 
 	publicKey, err := loadPublicKey(certPath)
 	if err != nil {
@@ -76,7 +76,7 @@ func NewSignatureVerificationController(certPath string) (*SignatureVerification
 
 	logger.Printf("Loaded public key from %s", certPath)
 
-	return &SignatureVerificationController{
+	return &PolicyVerificationController{
 		publicKey: publicKey,
 		certPath:  certPath,
 		logger:    logger,
@@ -84,12 +84,12 @@ func NewSignatureVerificationController(certPath string) (*SignatureVerification
 }
 
 // Name returns the name of the controller
-func (c *SignatureVerificationController) Name() string {
-	return "signature-verification"
+func (c *PolicyVerificationController) Name() string {
+	return "policy-verification"
 }
 
 // Admit verifies the pod policy signature and checks if the pod matches the policy
-func (c *SignatureVerificationController) Admit(req *Request) *Decision {
+func (c *PolicyVerificationController) Admit(req *Request) *Decision {
 	// Get the policy and signature from annotations
 	policyStr, hasPolicy := c.getAnnotation(req.Pod, PolicyAnnotation)
 	if !hasPolicy {
@@ -143,7 +143,7 @@ func (c *SignatureVerificationController) Admit(req *Request) *Decision {
 }
 
 // getAnnotation extracts an annotation from pod metadata
-func (c *SignatureVerificationController) getAnnotation(pod map[string]interface{}, key string) (string, bool) {
+func (c *PolicyVerificationController) getAnnotation(pod map[string]interface{}, key string) (string, bool) {
 	metadata, ok := pod["metadata"].(map[string]interface{})
 	if !ok {
 		return "", false
@@ -159,7 +159,7 @@ func (c *SignatureVerificationController) getAnnotation(pod map[string]interface
 }
 
 // checkPodAgainstPolicy verifies the pod spec matches the signed policy
-func (c *SignatureVerificationController) checkPodAgainstPolicy(pod map[string]interface{}, policy *Policy) error {
+func (c *PolicyVerificationController) checkPodAgainstPolicy(pod map[string]interface{}, policy *Policy) error {
 	spec, ok := pod["spec"].(map[string]interface{})
 	if !ok {
 		return fmt.Errorf("pod has no spec")
@@ -189,7 +189,7 @@ func (c *SignatureVerificationController) checkPodAgainstPolicy(pod map[string]i
 }
 
 // checkContainers verifies all containers match their policies by name
-func (c *SignatureVerificationController) checkContainers(spec map[string]interface{}, containerType string, containerPolicies map[string]ContainerPolicy) error {
+func (c *PolicyVerificationController) checkContainers(spec map[string]interface{}, containerType string, containerPolicies map[string]ContainerPolicy) error {
 	containers, ok := spec[containerType].([]interface{})
 	if !ok {
 		// No containers of this type in spec
@@ -250,7 +250,7 @@ func (c *SignatureVerificationController) checkContainers(spec map[string]interf
 }
 
 // matchWildcard matches a string against a pattern with * wildcards
-func (c *SignatureVerificationController) matchWildcard(pattern, str string) bool {
+func (c *PolicyVerificationController) matchWildcard(pattern, str string) bool {
 	// Convert wildcard pattern to regex
 	regexPattern := "^" + regexp.QuoteMeta(pattern) + "$"
 	regexPattern = strings.ReplaceAll(regexPattern, `\*`, ".*")
@@ -263,7 +263,7 @@ func (c *SignatureVerificationController) matchWildcard(pattern, str string) boo
 }
 
 // checkHostNamespaces verifies host namespace settings match the policy
-func (c *SignatureVerificationController) checkHostNamespaces(spec map[string]interface{}, policy *Policy) error {
+func (c *PolicyVerificationController) checkHostNamespaces(spec map[string]interface{}, policy *Policy) error {
 	hostNetwork, _ := spec["hostNetwork"].(bool)
 	if hostNetwork && !policy.AllowHostNetwork {
 		return fmt.Errorf("hostNetwork not allowed by policy")
@@ -283,7 +283,7 @@ func (c *SignatureVerificationController) checkHostNamespaces(spec map[string]in
 }
 
 // checkContainerSecurityContextAgainstPolicy checks a container's security context against its policy
-func (c *SignatureVerificationController) checkContainerSecurityContextAgainstPolicy(container map[string]interface{}, name, containerType string, policy *ContainerPolicy) error {
+func (c *PolicyVerificationController) checkContainerSecurityContextAgainstPolicy(container map[string]interface{}, name, containerType string, policy *ContainerPolicy) error {
 	securityContext, _ := container["securityContext"].(map[string]interface{})
 
 	// Check privileged
@@ -318,7 +318,7 @@ func (c *SignatureVerificationController) checkContainerSecurityContextAgainstPo
 }
 
 // capabilitySetsEqual checks if two capability slices contain the same elements
-func (c *SignatureVerificationController) capabilitySetsEqual(a, b []string) bool {
+func (c *PolicyVerificationController) capabilitySetsEqual(a, b []string) bool {
 	if len(a) != len(b) {
 		return false
 	}
@@ -339,7 +339,7 @@ func (c *SignatureVerificationController) capabilitySetsEqual(a, b []string) boo
 }
 
 // checkNodeSelectors verifies node selectors match the policy exactly
-func (c *SignatureVerificationController) checkNodeSelectors(spec map[string]interface{}, policySelectors map[string]string) error {
+func (c *PolicyVerificationController) checkNodeSelectors(spec map[string]interface{}, policySelectors map[string]string) error {
 	podSelectors, _ := spec["nodeSelector"].(map[string]interface{})
 
 	// Convert pod selectors to map[string]string
@@ -369,7 +369,7 @@ func (c *SignatureVerificationController) checkNodeSelectors(spec map[string]int
 }
 
 // verifySignature verifies the signature against the hash
-func (c *SignatureVerificationController) verifySignature(hash, signature []byte) error {
+func (c *PolicyVerificationController) verifySignature(hash, signature []byte) error {
 	switch key := c.publicKey.(type) {
 	case *rsa.PublicKey:
 		return rsa.VerifyPKCS1v15(key, crypto.SHA256, hash, signature)

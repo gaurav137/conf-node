@@ -178,7 +178,7 @@ ExecStart=/usr/local/bin/kubelet-proxy \
     --listen-addr 127.0.0.1:6444 \
     --tls-cert /etc/kubelet-proxy/kubelet-proxy.crt \
     --tls-key /etc/kubelet-proxy/kubelet-proxy.key \
-    --signature-verification-cert /etc/kubelet-proxy/signing-cert.pem \
+    --policy-verification-cert /etc/kubelet-proxy/signing-cert.pem \
     --log-requests=true \
     --log-pod-payloads=false
 
@@ -388,7 +388,7 @@ print_usage() {
     echo "NOTE: kubelet-proxy is installed on the WORKER node only."
     echo "      The worker node has a taint 'signed-workloads=required:NoSchedule'."
     echo "      Pods must have matching toleration AND node selector to be scheduled there."
-    echo "      Signature verification is ENABLED - unsigned pods will be rejected."
+    echo "      Pod policy verification is ENABLED - unsigned pods will be rejected."
     echo ""
     echo "1. Check kubelet-proxy logs on worker:"
     echo "   docker exec $WORKER_NODE_NAME journalctl -u kubelet-proxy -f"
