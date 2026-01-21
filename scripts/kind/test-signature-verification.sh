@@ -27,6 +27,7 @@ SIGNING_SERVER_PORT="${SIGNING_SERVER_PORT:-8080}"
 TEST1_RESULT=""
 TEST2_RESULT=""
 TEST3_RESULT=""
+TEST4_RESULT=""
 
 check_prerequisites() {
     log_info "Checking prerequisites..."
@@ -125,6 +126,7 @@ cleanup_test_resources() {
     kubectl delete pod test-signed --ignore-not-found=true 2>/dev/null || true
     kubectl delete pod test-unsigned --ignore-not-found=true 2>/dev/null || true
     kubectl delete pod test-bad-sig --ignore-not-found=true 2>/dev/null || true
+    kubectl delete pod test-image-mismatch --ignore-not-found=true 2>/dev/null || true
     sleep 2
 }
 
@@ -269,6 +271,91 @@ EOF
     echo ""
 }
 
+test_image_mismatch_pod() {
+    log_test "TEST 4: Creating a pod with MISMATCHED IMAGE (policy says nginx, pod uses busybox)..."
+    echo ""
+    
+    mkdir -p "$TEST_PODS_DIR"
+    
+    # Create a pod with nginx image and sign it
+    create_test_pod_yaml "test-image-mismatch" "default" > "$TEST_PODS_DIR/test-image-mismatch-original.yaml"
+    
+    # Sign the pod (policy will include nginx:latest as allowed image)
+    log_info "Signing pod with nginx:latest image..."
+    "$SIGN_POD_SCRIPT" sign-spec "$TEST_PODS_DIR/test-image-mismatch-original.yaml" > "$TEST_PODS_DIR/test-image-mismatch-signed.yaml" 2>/dev/null
+    
+    # Extract the policy and signature annotations from the signed pod
+    local policy_annotation
+    local signature_annotation
+    policy_annotation=$(grep 'kubelet-proxy.io/policy:' "$TEST_PODS_DIR/test-image-mismatch-signed.yaml" | sed 's/.*kubelet-proxy.io\/policy: //')
+    signature_annotation=$(grep 'kubelet-proxy.io/signature:' "$TEST_PODS_DIR/test-image-mismatch-signed.yaml" | sed 's/.*kubelet-proxy.io\/signature: //')
+    
+    log_info "Creating pod with busybox:latest but keeping nginx policy signature..."
+    
+    # Create a new pod with busybox image but using the nginx policy signature
+    cat > "$TEST_PODS_DIR/test-image-mismatch.yaml" <<EOF
+apiVersion: v1
+kind: Pod
+metadata:
+  name: test-image-mismatch
+  namespace: default
+  annotations:
+    kubelet-proxy.io/policy: $policy_annotation
+    kubelet-proxy.io/signature: $signature_annotation
+spec:
+  nodeSelector:
+    node-type: signed-workloads
+  tolerations:
+  - key: "signed-workloads"
+    operator: "Equal"
+    value: "required"
+    effect: "NoSchedule"
+  containers:
+  - name: test
+    image: busybox:latest
+    command: ["sleep", "3600"]
+EOF
+    
+    # Apply the pod with mismatched image
+    kubectl apply -f "$TEST_PODS_DIR/test-image-mismatch.yaml"
+    
+    log_info "Waiting for admission decision..."
+    sleep 5
+    
+    echo ""
+    echo "Pod status:"
+    kubectl get pod test-image-mismatch -o wide 2>/dev/null || echo "Pod not found"
+    echo ""
+    
+    # Check if pod is in Failed state
+    POD_STATUS=$(kubectl get pod test-image-mismatch -o jsonpath='{.status.phase}' 2>/dev/null || echo "NotFound")
+    POD_REASON=$(kubectl get pod test-image-mismatch -o jsonpath='{.status.reason}' 2>/dev/null || echo "")
+    POD_MESSAGE=$(kubectl get pod test-image-mismatch -o jsonpath='{.status.message}' 2>/dev/null || echo "")
+    
+    if [[ "$POD_STATUS" == "Failed" && "$POD_REASON" == "NodeAdmissionRejected" ]]; then
+        if echo "$POD_MESSAGE" | grep -qi "image"; then
+            log_info "✓ TEST 4 PASSED: Pod with mismatched image was REJECTED (status: $POD_STATUS, reason: $POD_REASON)"
+            echo ""
+            kubectl describe pod test-image-mismatch | grep -A3 "Message:"
+            TEST4_RESULT="PASSED"
+        else
+            log_info "✓ TEST 4 PASSED: Pod was REJECTED (status: $POD_STATUS, reason: $POD_REASON)"
+            echo ""
+            kubectl describe pod test-image-mismatch | grep -A3 "Message:"
+            TEST4_RESULT="PASSED"
+        fi
+    elif [[ "$POD_STATUS" == "Failed" ]]; then
+        log_warn "? TEST 4 PARTIAL: Pod is Failed but reason is '$POD_REASON'"
+        kubectl describe pod test-image-mismatch | grep -A5 "Status:"
+        TEST4_RESULT="PARTIAL"
+    else
+        log_error "✗ TEST 4 FAILED: Pod with mismatched image was NOT rejected (status: $POD_STATUS)"
+        kubectl describe pod test-image-mismatch
+        TEST4_RESULT="FAILED"
+    fi
+    echo ""
+}
+
 show_proxy_logs() {
     log_test "Recent kubelet-proxy logs (signature verification)..."
     echo ""
@@ -290,6 +377,7 @@ run_tests() {
     test_signed_pod
     test_unsigned_pod
     test_bad_signature_pod
+    test_image_mismatch_pod
     show_proxy_logs
     
     echo ""
@@ -334,6 +422,17 @@ run_tests() {
         failed=$((failed + 1))
     fi
     
+    if [[ "$TEST4_RESULT" == "PASSED" ]]; then
+        echo -e "  ${GREEN}✓${NC} TEST 4: Image mismatch rejected  - PASSED"
+        passed=$((passed + 1))
+    elif [[ "$TEST4_RESULT" == "PARTIAL" ]]; then
+        echo -e "  ${YELLOW}?${NC} TEST 4: Image mismatch rejected  - PARTIAL"
+        partial=$((partial + 1))
+    else
+        echo -e "  ${RED}✗${NC} TEST 4: Image mismatch rejected  - FAILED"
+        failed=$((failed + 1))
+    fi
+    
     echo ""
     echo "----------------------------------------"
     if [[ $failed -eq 0 && $partial -eq 0 ]]; then
@@ -352,7 +451,7 @@ run_tests() {
     echo "  docker exec $WORKER_NODE_NAME journalctl -u kubelet-proxy -f"
     echo ""
     echo "To clean up test resources:"
-    echo "  kubectl delete pod test-signed test-unsigned test-bad-sig"
+    echo "  kubectl delete pod test-signed test-unsigned test-bad-sig test-image-mismatch"
     echo ""
     
     # Exit with error if any tests failed
