@@ -23,7 +23,6 @@ SIGNING_SERVER_PORT=8080
 
 # Proxy configuration
 PROXY_LISTEN_ADDR="127.0.0.1:6444"
-PROXY_CERT_DIR="/etc/kubelet-proxy"
 
 cleanup() {
     log_info "Cleaning up existing cluster if present..."
@@ -94,23 +93,6 @@ label_and_taint_worker_node() {
     echo ""
 }
 
-generate_proxy_certs() {
-    log_info "Generating TLS certificates for kubelet-proxy..."
-    
-    local cert_dir="$PROJECT_ROOT/tmp/certs"
-    mkdir -p "$cert_dir"
-    
-    # Generate self-signed certificate for kubelet-proxy server
-    openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-        -keyout "$cert_dir/kubelet-proxy.key" \
-        -out "$cert_dir/kubelet-proxy.crt" \
-        -subj "/CN=kubelet-proxy/O=kubelet-proxy" \
-        -addext "subjectAltName=IP:127.0.0.1,DNS:localhost,DNS:kubelet-proxy" \
-        2>/dev/null
-    
-    log_info "Certificates generated in $cert_dir"
-}
-
 deploy_signing_server() {
     log_info "Starting signing-server as local Docker container..."
     
@@ -157,184 +139,11 @@ get_signing_cert() {
     log_info "Signing certificate saved to $cert_dir/signing-cert.pem"
 }
 
-create_systemd_service() {
-    log_info "Creating systemd service file..."
-    
-    local service_dir="$PROJECT_ROOT/tmp"
-    mkdir -p "$service_dir"
-    
-    cat > "$service_dir/kubelet-proxy.service" <<'EOF'
-[Unit]
-Description=Kubelet Proxy - Pod Admission Control
-Documentation=https://github.com/gaurav137/conf-inferencing
-Before=kubelet.service
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-ExecStart=/usr/local/bin/kubelet-proxy \
-    --kubeconfig /etc/kubernetes/kubelet.conf \
-    --listen-addr 127.0.0.1:6444 \
-    --tls-cert /etc/kubelet-proxy/kubelet-proxy.crt \
-    --tls-key /etc/kubelet-proxy/kubelet-proxy.key \
-    --policy-verification-cert /etc/kubelet-proxy/signing-cert.pem \
-    --log-requests=true \
-    --log-pod-payloads=false
-
-Restart=always
-RestartSec=5
-StandardOutput=journal
-StandardError=journal
-
-[Install]
-WantedBy=multi-user.target
-EOF
-    
-    log_info "Systemd service file created"
-}
-
-create_kubelet_proxy_kubeconfig() {
-    log_info "Creating kubeconfig for kubelet to connect via proxy..."
-    
-    local config_dir="$PROJECT_ROOT/tmp"
-    mkdir -p "$config_dir"
-    
-    # This script will be run inside the container to create the kubeconfig
-    cat > "$config_dir/create-proxy-kubeconfig.sh" <<'SCRIPT'
-#!/bin/bash
-set -e
-
-# Read the original kubelet kubeconfig
-ORIG_KUBECONFIG="/etc/kubernetes/kubelet.conf"
-PROXY_KUBECONFIG="/etc/kubernetes/kubelet-via-proxy.conf"
-
-# Get the original user credentials
-CLIENT_CERT=$(kubectl config view --kubeconfig="$ORIG_KUBECONFIG" -o jsonpath='{.users[0].user.client-certificate}' --raw)
-CLIENT_KEY=$(kubectl config view --kubeconfig="$ORIG_KUBECONFIG" -o jsonpath='{.users[0].user.client-key}' --raw)
-
-# Create new kubeconfig pointing to proxy
-cat > "$PROXY_KUBECONFIG" <<EOF
-apiVersion: v1
-kind: Config
-clusters:
-- cluster:
-    certificate-authority: /etc/kubelet-proxy/kubelet-proxy.crt
-    server: https://127.0.0.1:6444
-  name: proxy
-contexts:
-- context:
-    cluster: proxy
-    user: kubelet
-  name: proxy
-current-context: proxy
-users:
-- name: kubelet
-  user:
-    client-certificate: ${CLIENT_CERT}
-    client-key: ${CLIENT_KEY}
-EOF
-
-echo "Created $PROXY_KUBECONFIG"
-SCRIPT
-    
-    chmod +x "$config_dir/create-proxy-kubeconfig.sh"
-}
-
-create_setup_script() {
-    log_info "Creating node setup script..."
-    
-    local script_dir="$PROJECT_ROOT/tmp"
-    mkdir -p "$script_dir"
-    
-    cat > "$script_dir/setup-node.sh" <<'SCRIPT'
-#!/bin/bash
-set -e
-
-# Staging directory where files are copied
-# Note: /tmp is a tmpfs mount in kind nodes, so we use /opt instead
-STAGING_DIR="/opt/kubelet-proxy-staging"
-
-echo "=== Setting up kubelet-proxy on node ==="
-
-# Create directories
-mkdir -p /etc/kubelet-proxy
-mkdir -p /var/log/kubelet-proxy
-
-# Move files to proper locations
-mv "$STAGING_DIR/kubelet-proxy" /usr/local/bin/kubelet-proxy
-chmod +x /usr/local/bin/kubelet-proxy
-
-mv "$STAGING_DIR/kubelet-proxy.crt" /etc/kubelet-proxy/
-mv "$STAGING_DIR/kubelet-proxy.key" /etc/kubelet-proxy/
-mv "$STAGING_DIR/signing-cert.pem" /etc/kubelet-proxy/
-
-mv "$STAGING_DIR/kubelet-proxy.service" /etc/systemd/system/
-
-# Create proxy kubeconfig for kubelet
-"$STAGING_DIR/create-proxy-kubeconfig.sh"
-
-# Reload systemd and start proxy
-systemctl daemon-reload
-systemctl enable kubelet-proxy
-systemctl start kubelet-proxy
-
-# Wait for proxy to be ready
-echo "Waiting for kubelet-proxy to start..."
-sleep 3
-
-if systemctl is-active --quiet kubelet-proxy; then
-    echo "kubelet-proxy is running"
-else
-    echo "ERROR: kubelet-proxy failed to start"
-    journalctl -u kubelet-proxy --no-pager -n 50
-    exit 1
-fi
-
-# Backup original kubelet config
-cp /var/lib/kubelet/config.yaml /var/lib/kubelet/config.yaml.backup
-
-# Update kubelet to use proxy kubeconfig
-# We need to modify the kubelet drop-in to use our proxy kubeconfig
-mkdir -p /etc/systemd/system/kubelet.service.d
-
-cat > /etc/systemd/system/kubelet.service.d/20-kubelet-proxy.conf <<EOF
-[Service]
-Environment="KUBELET_KUBECONFIG_ARGS=--kubeconfig=/etc/kubernetes/kubelet-via-proxy.conf --bootstrap-kubeconfig="
-EOF
-
-# Reload and restart kubelet
-systemctl daemon-reload
-systemctl restart kubelet
-
-echo "Waiting for kubelet to restart..."
-sleep 5
-
-if systemctl is-active --quiet kubelet; then
-    echo "kubelet is running with proxy"
-else
-    echo "WARNING: kubelet may have issues, checking status..."
-    systemctl status kubelet --no-pager || true
-fi
-
-echo "=== Setup complete ==="
-echo ""
-echo "To check kubelet-proxy logs:"
-echo "  docker exec $HOSTNAME journalctl -u kubelet-proxy -f"
-echo ""
-echo "To check kubelet logs:"
-echo "  docker exec $HOSTNAME journalctl -u kubelet -f"
-SCRIPT
-    
-    chmod +x "$script_dir/setup-node.sh"
-}
-
 deploy_to_node() {
-    log_info "Deploying kubelet-proxy to worker node: $WORKER_NODE_NAME"
+    log_info "Deploying kubelet-proxy to worker node using install.sh: $WORKER_NODE_NAME"
     
     local tmp_dir="$PROJECT_ROOT/tmp"
     local cert_dir="$tmp_dir/certs"
-    # Note: /tmp is a tmpfs in kind nodes, so we use /opt for staging
     local staging_dir="/opt/kubelet-proxy-staging"
     
     # Create staging directory on node
@@ -343,22 +152,21 @@ deploy_to_node() {
     # Copy files to worker node
     log_info "Copying files to worker node..."
     
+    # Copy local binary, install script, and signing cert
     docker cp "$PROJECT_ROOT/bin/kubelet-proxy-linux-amd64" "$WORKER_NODE_NAME:$staging_dir/kubelet-proxy"
-    docker cp "$cert_dir/kubelet-proxy.crt" "$WORKER_NODE_NAME:$staging_dir/"
-    docker cp "$cert_dir/kubelet-proxy.key" "$WORKER_NODE_NAME:$staging_dir/"
-    docker cp "$cert_dir/signing-cert.pem" "$WORKER_NODE_NAME:$staging_dir/"
-    docker cp "$tmp_dir/kubelet-proxy.service" "$WORKER_NODE_NAME:$staging_dir/"
-    docker cp "$tmp_dir/create-proxy-kubeconfig.sh" "$WORKER_NODE_NAME:$staging_dir/"
-    docker cp "$tmp_dir/setup-node.sh" "$WORKER_NODE_NAME:$staging_dir/"
+    docker cp "$PROJECT_ROOT/scripts/install.sh" "$WORKER_NODE_NAME:$staging_dir/install.sh"
+    docker cp "$cert_dir/signing-cert.pem" "$WORKER_NODE_NAME:$staging_dir/signing-cert.pem"
     
     # Verify files were copied
     log_info "Verifying files on node..."
     docker exec "$WORKER_NODE_NAME" ls -la "$staging_dir/"
     
-    # Run setup script on worker node
-    log_info "Running setup script on worker node..."
-    docker exec "$WORKER_NODE_NAME" chmod +x "$staging_dir/setup-node.sh"
-    docker exec "$WORKER_NODE_NAME" "$staging_dir/setup-node.sh"
+    # Run install.sh with local binary and signing cert
+    log_info "Running install.sh on worker node..."
+    docker exec "$WORKER_NODE_NAME" bash "$staging_dir/install.sh" \
+        --local-binary "$staging_dir/kubelet-proxy" \
+        --signing-cert-file "$staging_dir/signing-cert.pem" \
+        --proxy-listen-addr "$PROXY_LISTEN_ADDR"
 }
 
 verify_deployment() {
@@ -420,16 +228,13 @@ main() {
     
     # Create tmp directory
     mkdir -p "$PROJECT_ROOT/tmp"
+    mkdir -p "$PROJECT_ROOT/tmp/certs"
     mkdir -p /tmp/kubelet-proxy-logs
     
     # Run deployment steps
     cleanup
     build_binary
     build_signing_server_image
-    generate_proxy_certs
-    create_systemd_service
-    create_kubelet_proxy_kubeconfig
-    create_setup_script
     create_cluster
     label_and_taint_worker_node
     deploy_signing_server

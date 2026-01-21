@@ -15,6 +15,7 @@
 #
 # Optional:
 #   --config FILE             JSON configuration file with all options
+#   --local-binary FILE       Use local binary instead of downloading from GitHub
 #   --version VERSION         Kubelet-proxy version to install (default: latest)
 #   --signing-cert-file FILE  Path to local signing certificate file (instead of URL)
 #   --github-repo REPO        GitHub repository (default: gaurav137/conf-inferencing)
@@ -60,6 +61,7 @@ PROXY_CERT_DIR="/etc/kubelet-proxy"
 PROXY_BIN_PATH="/usr/local/bin/kubelet-proxy"
 SIGNING_CERT_URL=""
 SIGNING_CERT_FILE=""
+LOCAL_BINARY=""
 SKIP_KUBELET_RESTART=false
 CONFIG_FILE=""
 
@@ -88,6 +90,10 @@ parse_args() {
                 ;;
             --signing-cert-file)
                 SIGNING_CERT_FILE="$2"
+                shift 2
+                ;;
+            --local-binary)
+                LOCAL_BINARY="$2"
                 shift 2
                 ;;
             --version)
@@ -168,6 +174,11 @@ load_config() {
         [[ "$val" == "true" ]] && SKIP_KUBELET_RESTART=true
     fi
 
+    if [[ -z "$LOCAL_BINARY" ]]; then
+        val=$(jq -r '.localBinary // empty' "$CONFIG_FILE")
+        [[ -n "$val" ]] && LOCAL_BINARY="$val"
+    fi
+
     log_info "Configuration loaded from $CONFIG_FILE"
 }
 
@@ -210,6 +221,11 @@ check_prerequisites() {
         exit 1
     fi
 
+    if [[ -n "$LOCAL_BINARY" && ! -f "$LOCAL_BINARY" ]]; then
+        log_error "Local binary not found: $LOCAL_BINARY"
+        exit 1
+    fi
+
     log_info "Prerequisites check passed"
 }
 
@@ -242,6 +258,12 @@ get_latest_version() {
 }
 
 resolve_version() {
+    # Skip version resolution if using local binary
+    if [[ -n "$LOCAL_BINARY" ]]; then
+        VERSION="local"
+        return
+    fi
+
     if [[ -n "$VERSION" ]]; then
         log_info "Using specified version: $VERSION"
         return
@@ -259,7 +281,17 @@ resolve_version() {
 }
 
 download_binary() {
-    log_step "Downloading kubelet-proxy binary..."
+    log_step "Installing kubelet-proxy binary..."
+
+    # Use local binary if specified
+    if [[ -n "$LOCAL_BINARY" ]]; then
+        log_info "Using local binary: $LOCAL_BINARY"
+        cp "$LOCAL_BINARY" "$PROXY_BIN_PATH"
+        chmod +x "$PROXY_BIN_PATH"
+        log_info "Binary installed to $PROXY_BIN_PATH"
+        log_info "Version: $($PROXY_BIN_PATH --version 2>/dev/null || echo 'unknown')"
+        return
+    fi
 
     local arch
     arch=$(detect_architecture)
