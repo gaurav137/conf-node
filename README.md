@@ -377,6 +377,41 @@ curl http://localhost:8080/signingcert > signing-cert.pem
 └── README.md
 ```
 
+## Installation on VM Nodes
+
+For production deployments on VM-based Kubernetes worker nodes, use the `install.sh` script with a JSON configuration file:
+
+```bash
+# Create a configuration file
+cat > kubelet-proxy-config.json <<EOF
+{
+  "signing_cert_url": "https://signing-server.example.com/signingcert"
+}
+EOF
+
+# Download and run the installer
+curl -fsSL https://raw.githubusercontent.com/gaurav137/conf-inferencing/main/scripts/install.sh | sudo bash -s -- --config kubelet-proxy-config.json
+```
+
+### Configuration Options
+
+| JSON Field | Description |
+|------------|-------------|
+| `signing_cert_url` | URL to download the signing certificate from |
+| `signing_cert_file` | Path to local signing certificate file (alternative to URL) |
+| `version` | Kubelet-proxy version to install (default: latest from GitHub releases) |
+| `github_repo` | GitHub repository (default: gaurav137/conf-inferencing) |
+| `proxy_listen_addr` | Proxy listen address (default: 127.0.0.1:6444) |
+| `skip_kubelet_restart` | Don't restart kubelet after installation (default: false) |
+
+### Uninstalling
+
+To remove kubelet-proxy and restore the original kubelet configuration:
+
+```bash
+sudo ./scripts/uninstall.sh
+```
+
 ## Testing with Kind
 
 Deploy kubelet-proxy to a kind cluster with signing-server running locally:
