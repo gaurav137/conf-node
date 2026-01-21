@@ -87,12 +87,6 @@ func (c *SignatureVerificationController) Name() string {
 
 // Admit verifies the pod policy signature and checks if the pod matches the policy
 func (c *SignatureVerificationController) Admit(req *Request) *Decision {
-	// Allow all pods in kube-system namespace without signature verification
-	if req.Namespace == "kube-system" {
-		c.logger.Printf("Pod %s/%s allowed: kube-system namespace is exempt from signature verification", req.Namespace, req.Name)
-		return Allow("kube-system namespace is exempt from signature verification")
-	}
-
 	// Get the policy and signature from annotations
 	policyStr, hasPolicy := c.getAnnotation(req.Pod, PolicyAnnotation)
 	if !hasPolicy {

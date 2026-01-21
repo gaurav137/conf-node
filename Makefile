@@ -91,11 +91,11 @@ deploy-kind:
 teardown-kind:
 	@./scripts/kind/teardown-kind.sh
 
-## test-kind: Run signature verification tests against the kind cluster
-test-kind: test-signature
+## test-kind: Run pod policy verification tests against the kind cluster
+test-kind: test-pod-policies
 
-## test-signature: Run signature verification tests against the kind cluster
-test-signature:
+## test-pod-policies: Run pod policy verification tests against the kind cluster
+test-pod-policies:
 	@./scripts/kind/test-pod-policies.sh
 
 ## help: Show this help message
