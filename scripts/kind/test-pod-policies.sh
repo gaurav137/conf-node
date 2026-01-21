@@ -263,12 +263,21 @@ EOF
     # Check if pod is in Failed state
     POD_STATUS=$(kubectl get pod test-unsigned -o jsonpath='{.status.phase}' 2>/dev/null || echo "NotFound")
     POD_REASON=$(kubectl get pod test-unsigned -o jsonpath='{.status.reason}' 2>/dev/null || echo "")
+    POD_MESSAGE=$(kubectl get pod test-unsigned -o jsonpath='{.status.message}' 2>/dev/null || echo "")
     
+    EXPECTED_MSG="pod policy required but not found"
     if [[ "$POD_STATUS" == "Failed" && "$POD_REASON" == "NodeAdmissionRejected" ]]; then
-        log_info "✓ TEST 2 PASSED: Unsigned pod was REJECTED (status: $POD_STATUS, reason: $POD_REASON)"
-        echo ""
-        kubectl describe pod test-unsigned | grep -A3 "Message:"
-        TEST2_RESULT="PASSED"
+        if echo "$POD_MESSAGE" | grep -q "$EXPECTED_MSG"; then
+            log_info "✓ TEST 2 PASSED: Unsigned pod was REJECTED with expected message"
+            echo ""
+            kubectl describe pod test-unsigned | grep -A3 "Message:"
+            TEST2_RESULT="PASSED"
+        else
+            log_error "✗ TEST 2 FAILED: Pod rejected but message mismatch"
+            log_error "  Expected: '$EXPECTED_MSG'"
+            log_error "  Got: '$POD_MESSAGE'"
+            TEST2_RESULT="FAILED"
+        fi
     elif [[ "$POD_STATUS" == "Failed" ]]; then
         log_warn "? TEST 2 PARTIAL: Pod is Failed but reason is '$POD_REASON'"
         kubectl describe pod test-unsigned | grep -A5 "Status:"
@@ -328,12 +337,21 @@ EOF
     # Check if pod is in Failed state
     POD_STATUS=$(kubectl get pod test-bad-sig -o jsonpath='{.status.phase}' 2>/dev/null || echo "NotFound")
     POD_REASON=$(kubectl get pod test-bad-sig -o jsonpath='{.status.reason}' 2>/dev/null || echo "")
+    POD_MESSAGE=$(kubectl get pod test-bad-sig -o jsonpath='{.status.message}' 2>/dev/null || echo "")
     
+    EXPECTED_MSG="policy signature verification failed"
     if [[ "$POD_STATUS" == "Failed" && "$POD_REASON" == "NodeAdmissionRejected" ]]; then
-        log_info "✓ TEST 3 PASSED: Pod with bad signature was REJECTED (status: $POD_STATUS, reason: $POD_REASON)"
-        echo ""
-        kubectl describe pod test-bad-sig | grep -A3 "Message:"
-        TEST3_RESULT="PASSED"
+        if echo "$POD_MESSAGE" | grep -q "$EXPECTED_MSG"; then
+            log_info "✓ TEST 3 PASSED: Pod with bad signature was REJECTED with expected message"
+            echo ""
+            kubectl describe pod test-bad-sig | grep -A3 "Message:"
+            TEST3_RESULT="PASSED"
+        else
+            log_error "✗ TEST 3 FAILED: Pod rejected but message mismatch"
+            log_error "  Expected: '$EXPECTED_MSG'"
+            log_error "  Got: '$POD_MESSAGE'"
+            TEST3_RESULT="FAILED"
+        fi
     elif [[ "$POD_STATUS" == "Failed" ]]; then
         log_warn "? TEST 3 PARTIAL: Pod is Failed but reason is '$POD_REASON'"
         TEST3_RESULT="PARTIAL"
@@ -412,17 +430,18 @@ EOF
     POD_REASON=$(kubectl get pod test-image-mismatch -o jsonpath='{.status.reason}' 2>/dev/null || echo "")
     POD_MESSAGE=$(kubectl get pod test-image-mismatch -o jsonpath='{.status.message}' 2>/dev/null || echo "")
     
+    EXPECTED_MSG="image.*does not match policy"
     if [[ "$POD_STATUS" == "Failed" && "$POD_REASON" == "NodeAdmissionRejected" ]]; then
-        if echo "$POD_MESSAGE" | grep -qi "image"; then
-            log_info "✓ TEST 4 PASSED: Pod with mismatched image was REJECTED (status: $POD_STATUS, reason: $POD_REASON)"
+        if echo "$POD_MESSAGE" | grep -qE "$EXPECTED_MSG"; then
+            log_info "✓ TEST 4 PASSED: Pod with mismatched image was REJECTED with expected message"
             echo ""
             kubectl describe pod test-image-mismatch | grep -A3 "Message:"
             TEST4_RESULT="PASSED"
         else
-            log_info "✓ TEST 4 PASSED: Pod was REJECTED (status: $POD_STATUS, reason: $POD_REASON)"
-            echo ""
-            kubectl describe pod test-image-mismatch | grep -A3 "Message:"
-            TEST4_RESULT="PASSED"
+            log_error "✗ TEST 4 FAILED: Pod rejected but message mismatch"
+            log_error "  Expected pattern: '$EXPECTED_MSG'"
+            log_error "  Got: '$POD_MESSAGE'"
+            TEST4_RESULT="FAILED"
         fi
     elif [[ "$POD_STATUS" == "Failed" ]]; then
         log_warn "? TEST 4 PARTIAL: Pod is Failed but reason is '$POD_REASON'"
@@ -643,11 +662,19 @@ EOF
     POD_REASON=$(kubectl get pod test-command-mismatch -o jsonpath='{.status.reason}' 2>/dev/null || echo "")
     POD_MESSAGE=$(kubectl get pod test-command-mismatch -o jsonpath='{.status.message}' 2>/dev/null || echo "")
     
+    EXPECTED_MSG="command.*does not match policy"
     if [[ "$POD_STATUS" == "Failed" && "$POD_REASON" == "NodeAdmissionRejected" ]]; then
-        log_info "✓ TEST 6 PASSED: Pod with command mismatch was REJECTED"
-        echo ""
-        kubectl describe pod test-command-mismatch | grep -A3 "Message:"
-        TEST6_RESULT="PASSED"
+        if echo "$POD_MESSAGE" | grep -qE "$EXPECTED_MSG"; then
+            log_info "✓ TEST 6 PASSED: Pod with command mismatch was REJECTED with expected message"
+            echo ""
+            kubectl describe pod test-command-mismatch | grep -A3 "Message:"
+            TEST6_RESULT="PASSED"
+        else
+            log_error "✗ TEST 6 FAILED: Pod rejected but message mismatch"
+            log_error "  Expected pattern: '$EXPECTED_MSG'"
+            log_error "  Got: '$POD_MESSAGE'"
+            TEST6_RESULT="FAILED"
+        fi
     elif [[ "$POD_STATUS" == "Failed" ]]; then
         log_warn "? TEST 6 PARTIAL: Pod is Failed but reason is '$POD_REASON'"
         TEST6_RESULT="PARTIAL"
@@ -735,12 +762,21 @@ EOF
     
     POD_STATUS=$(kubectl get pod test-env-mismatch -o jsonpath='{.status.phase}' 2>/dev/null || echo "NotFound")
     POD_REASON=$(kubectl get pod test-env-mismatch -o jsonpath='{.status.reason}' 2>/dev/null || echo "")
+    POD_MESSAGE=$(kubectl get pod test-env-mismatch -o jsonpath='{.status.message}' 2>/dev/null || echo "")
     
+    EXPECTED_MSG="env var.*does not match policy"
     if [[ "$POD_STATUS" == "Failed" && "$POD_REASON" == "NodeAdmissionRejected" ]]; then
-        log_info "✓ TEST 7 PASSED: Pod with env mismatch was REJECTED"
-        echo ""
-        kubectl describe pod test-env-mismatch | grep -A3 "Message:"
-        TEST7_RESULT="PASSED"
+        if echo "$POD_MESSAGE" | grep -qE "$EXPECTED_MSG"; then
+            log_info "✓ TEST 7 PASSED: Pod with env mismatch was REJECTED with expected message"
+            echo ""
+            kubectl describe pod test-env-mismatch | grep -A3 "Message:"
+            TEST7_RESULT="PASSED"
+        else
+            log_error "✗ TEST 7 FAILED: Pod rejected but message mismatch"
+            log_error "  Expected pattern: '$EXPECTED_MSG'"
+            log_error "  Got: '$POD_MESSAGE'"
+            TEST7_RESULT="FAILED"
+        fi
     elif [[ "$POD_STATUS" == "Failed" ]]; then
         log_warn "? TEST 7 PARTIAL: Pod is Failed but reason is '$POD_REASON'"
         TEST7_RESULT="PARTIAL"
@@ -828,12 +864,21 @@ EOF
     
     POD_STATUS=$(kubectl get pod test-volume-mismatch -o jsonpath='{.status.phase}' 2>/dev/null || echo "NotFound")
     POD_REASON=$(kubectl get pod test-volume-mismatch -o jsonpath='{.status.reason}' 2>/dev/null || echo "")
+    POD_MESSAGE=$(kubectl get pod test-volume-mismatch -o jsonpath='{.status.message}' 2>/dev/null || echo "")
     
+    EXPECTED_MSG="volume mount.*does not match policy"
     if [[ "$POD_STATUS" == "Failed" && "$POD_REASON" == "NodeAdmissionRejected" ]]; then
-        log_info "✓ TEST 8 PASSED: Pod with volume mount mismatch was REJECTED"
-        echo ""
-        kubectl describe pod test-volume-mismatch | grep -A3 "Message:"
-        TEST8_RESULT="PASSED"
+        if echo "$POD_MESSAGE" | grep -qE "$EXPECTED_MSG"; then
+            log_info "✓ TEST 8 PASSED: Pod with volume mount mismatch was REJECTED with expected message"
+            echo ""
+            kubectl describe pod test-volume-mismatch | grep -A3 "Message:"
+            TEST8_RESULT="PASSED"
+        else
+            log_error "✗ TEST 8 FAILED: Pod rejected but message mismatch"
+            log_error "  Expected pattern: '$EXPECTED_MSG'"
+            log_error "  Got: '$POD_MESSAGE'"
+            TEST8_RESULT="FAILED"
+        fi
     elif [[ "$POD_STATUS" == "Failed" ]]; then
         log_warn "? TEST 8 PARTIAL: Pod is Failed but reason is '$POD_REASON'"
         TEST8_RESULT="PARTIAL"
