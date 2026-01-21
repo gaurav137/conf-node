@@ -23,6 +23,11 @@ TEST_PODS_DIR="$PROJECT_ROOT/tmp/test-pods"
 SIGNING_SERVER_CONTAINER="signing-server"
 SIGNING_SERVER_PORT="${SIGNING_SERVER_PORT:-8080}"
 
+# Test result tracking
+TEST1_RESULT=""
+TEST2_RESULT=""
+TEST3_RESULT=""
+
 check_prerequisites() {
     log_info "Checking prerequisites..."
     
@@ -153,9 +158,11 @@ test_signed_pod() {
     POD_STATUS=$(kubectl get pod test-signed -o jsonpath='{.status.phase}')
     if [[ "$POD_STATUS" == "Running" || "$POD_STATUS" == "Pending" || "$POD_STATUS" == "ContainerCreating" ]]; then
         log_info "✓ TEST 1 PASSED: Signed pod was allowed (status: $POD_STATUS)"
+        TEST1_RESULT="PASSED"
     else
         log_error "✗ TEST 1 FAILED: Signed pod status is $POD_STATUS"
         kubectl describe pod test-signed
+        TEST1_RESULT="FAILED"
     fi
     echo ""
 }
@@ -188,12 +195,15 @@ test_unsigned_pod() {
         log_info "✓ TEST 2 PASSED: Unsigned pod was REJECTED (status: $POD_STATUS, reason: $POD_REASON)"
         echo ""
         kubectl describe pod test-unsigned | grep -A3 "Message:"
+        TEST2_RESULT="PASSED"
     elif [[ "$POD_STATUS" == "Failed" ]]; then
         log_warn "? TEST 2 PARTIAL: Pod is Failed but reason is '$POD_REASON'"
         kubectl describe pod test-unsigned | grep -A5 "Status:"
+        TEST2_RESULT="PARTIAL"
     else
         log_error "✗ TEST 2 FAILED: Unsigned pod was NOT rejected (status: $POD_STATUS)"
         kubectl describe pod test-unsigned
+        TEST2_RESULT="FAILED"
     fi
     echo ""
 }
@@ -247,11 +257,14 @@ EOF
         log_info "✓ TEST 3 PASSED: Pod with bad signature was REJECTED (status: $POD_STATUS, reason: $POD_REASON)"
         echo ""
         kubectl describe pod test-bad-sig | grep -A3 "Message:"
+        TEST3_RESULT="PASSED"
     elif [[ "$POD_STATUS" == "Failed" ]]; then
         log_warn "? TEST 3 PARTIAL: Pod is Failed but reason is '$POD_REASON'"
+        TEST3_RESULT="PARTIAL"
     else
         log_error "✗ TEST 3 FAILED: Pod with bad signature was NOT rejected (status: $POD_STATUS)"
         kubectl describe pod test-bad-sig
+        TEST3_RESULT="FAILED"
     fi
     echo ""
 }
@@ -281,8 +294,56 @@ run_tests() {
     
     echo ""
     echo "========================================"
-    echo "  Test Summary"
+    echo "  Test Results Summary"
     echo "========================================"
+    echo ""
+    
+    # Count results
+    local passed=0
+    local failed=0
+    local partial=0
+    
+    # Print individual test results
+    if [[ "$TEST1_RESULT" == "PASSED" ]]; then
+        echo -e "  ${GREEN}✓${NC} TEST 1: Signed pod allowed       - PASSED"
+        passed=$((passed + 1))
+    else
+        echo -e "  ${RED}✗${NC} TEST 1: Signed pod allowed       - FAILED"
+        failed=$((failed + 1))
+    fi
+    
+    if [[ "$TEST2_RESULT" == "PASSED" ]]; then
+        echo -e "  ${GREEN}✓${NC} TEST 2: Unsigned pod rejected    - PASSED"
+        passed=$((passed + 1))
+    elif [[ "$TEST2_RESULT" == "PARTIAL" ]]; then
+        echo -e "  ${YELLOW}?${NC} TEST 2: Unsigned pod rejected    - PARTIAL"
+        partial=$((partial + 1))
+    else
+        echo -e "  ${RED}✗${NC} TEST 2: Unsigned pod rejected    - FAILED"
+        failed=$((failed + 1))
+    fi
+    
+    if [[ "$TEST3_RESULT" == "PASSED" ]]; then
+        echo -e "  ${GREEN}✓${NC} TEST 3: Bad signature rejected   - PASSED"
+        passed=$((passed + 1))
+    elif [[ "$TEST3_RESULT" == "PARTIAL" ]]; then
+        echo -e "  ${YELLOW}?${NC} TEST 3: Bad signature rejected   - PARTIAL"
+        partial=$((partial + 1))
+    else
+        echo -e "  ${RED}✗${NC} TEST 3: Bad signature rejected   - FAILED"
+        failed=$((failed + 1))
+    fi
+    
+    echo ""
+    echo "----------------------------------------"
+    if [[ $failed -eq 0 && $partial -eq 0 ]]; then
+        echo -e "  ${GREEN}All $passed tests PASSED!${NC}"
+    elif [[ $failed -eq 0 ]]; then
+        echo -e "  ${YELLOW}$passed passed, $partial partial${NC}"
+    else
+        echo -e "  ${RED}$passed passed, $failed failed, $partial partial${NC}"
+    fi
+    echo "----------------------------------------"
     echo ""
     echo "To sign a pod:"
     echo "  $SIGN_POD_SCRIPT sign-spec <pod.yaml>"
@@ -293,6 +354,11 @@ run_tests() {
     echo "To clean up test resources:"
     echo "  kubectl delete pod test-signed test-unsigned test-bad-sig"
     echo ""
+    
+    # Exit with error if any tests failed
+    if [[ $failed -gt 0 ]]; then
+        exit 1
+    fi
 }
 
 # Parse arguments
