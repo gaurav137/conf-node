@@ -8,6 +8,7 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev
 
 # Binary names
 KUBELET_PROXY := kubelet-proxy
+SIGNING_SERVER := signing-server
 
 # Build flags
 LDFLAGS := -ldflags "-s -w -X main.version=$(VERSION)"
@@ -18,13 +19,19 @@ LDFLAGS := -ldflags "-s -w -X main.version=$(VERSION)"
 all: build
 
 ## build: Build all binaries
-build: kubelet-proxy
+build: kubelet-proxy signing-server
 
 ## kubelet-proxy: Build the kubelet-proxy binary
 kubelet-proxy:
 	@echo "Building kubelet-proxy..."
 	@mkdir -p $(BUILD_DIR)
 	$(GO) build $(GOFLAGS) $(LDFLAGS) -o $(BUILD_DIR)/$(KUBELET_PROXY) ./cmd/kubelet-proxy
+
+## signing-server: Build the signing-server binary
+signing-server:
+	@echo "Building signing-server..."
+	@mkdir -p $(BUILD_DIR)
+	$(GO) build $(GOFLAGS) $(LDFLAGS) -o $(BUILD_DIR)/$(SIGNING_SERVER) ./cmd/signing-server
 
 ## clean: Remove build artifacts
 clean:
@@ -52,19 +59,26 @@ release: clean
 	@echo "Building release artifacts for version $(VERSION)..."
 	@mkdir -p $(DIST_DIR)
 	
-	@# Build linux/amd64
-	@echo "Building linux/amd64..."
+	@# Build kubelet-proxy linux/amd64
+	@echo "Building kubelet-proxy linux/amd64..."
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build $(LDFLAGS) -o $(DIST_DIR)/kubelet-proxy ./cmd/kubelet-proxy
 	tar -czf $(DIST_DIR)/kubelet-proxy-linux-amd64.tar.gz -C $(DIST_DIR) kubelet-proxy
 	sha256sum $(DIST_DIR)/kubelet-proxy-linux-amd64.tar.gz | cut -d' ' -f1 > $(DIST_DIR)/kubelet-proxy-linux-amd64.tar.gz.sha256
 	@rm $(DIST_DIR)/kubelet-proxy
 	
-	@# Build linux/arm64
-	@echo "Building linux/arm64..."
+	@# Build kubelet-proxy linux/arm64
+	@echo "Building kubelet-proxy linux/arm64..."
 	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 $(GO) build $(LDFLAGS) -o $(DIST_DIR)/kubelet-proxy ./cmd/kubelet-proxy
 	tar -czf $(DIST_DIR)/kubelet-proxy-linux-arm64.tar.gz -C $(DIST_DIR) kubelet-proxy
 	sha256sum $(DIST_DIR)/kubelet-proxy-linux-arm64.tar.gz | cut -d' ' -f1 > $(DIST_DIR)/kubelet-proxy-linux-arm64.tar.gz.sha256
 	@rm $(DIST_DIR)/kubelet-proxy
+	
+	@# Build signing-server linux/amd64
+	@echo "Building signing-server linux/amd64..."
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build $(LDFLAGS) -o $(DIST_DIR)/signing-server ./cmd/signing-server
+	tar -czf $(DIST_DIR)/signing-server-linux-amd64.tar.gz -C $(DIST_DIR) signing-server
+	sha256sum $(DIST_DIR)/signing-server-linux-amd64.tar.gz | cut -d' ' -f1 > $(DIST_DIR)/signing-server-linux-amd64.tar.gz.sha256
+	@rm $(DIST_DIR)/signing-server
 	
 	@echo "Release artifacts created in $(DIST_DIR)/"
 	@ls -la $(DIST_DIR)/

@@ -17,6 +17,9 @@ KIND_IMAGE="${KIND_IMAGE:-kindest/node:v1.33.0}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
 WORKER_NODE_NAME="${CLUSTER_NAME}-worker"
+SIGNING_SERVER_IMAGE="signing-server:local"
+SIGNING_SERVER_CONTAINER="signing-server"
+SIGNING_SERVER_PORT=8080
 
 # Proxy configuration
 PROXY_LISTEN_ADDR="127.0.0.1:6444"
@@ -25,6 +28,10 @@ PROXY_CERT_DIR="/etc/kubelet-proxy"
 cleanup() {
     log_info "Cleaning up existing cluster if present..."
     kind delete cluster --name "$CLUSTER_NAME" 2>/dev/null || true
+    
+    # Stop and remove signing-server container if running
+    docker stop "$SIGNING_SERVER_CONTAINER" 2>/dev/null || true
+    docker rm "$SIGNING_SERVER_CONTAINER" 2>/dev/null || true
 }
 
 build_binary() {
@@ -38,6 +45,15 @@ build_binary() {
         ./cmd/kubelet-proxy
     
     log_info "Binary built: bin/kubelet-proxy-linux-amd64 (static)"
+}
+
+build_signing_server_image() {
+    log_info "Building signing-server container image..."
+    cd "$PROJECT_ROOT"
+    
+    docker build -t "$SIGNING_SERVER_IMAGE" -f Dockerfile.signing-server .
+    
+    log_info "Signing server image built: $SIGNING_SERVER_IMAGE"
 }
 
 create_cluster() {
@@ -81,6 +97,52 @@ generate_proxy_certs() {
     log_info "Certificates generated in $cert_dir"
 }
 
+deploy_signing_server() {
+    log_info "Starting signing-server as local Docker container..."
+    
+    # Stop existing container if running
+    docker stop "$SIGNING_SERVER_CONTAINER" 2>/dev/null || true
+    docker rm "$SIGNING_SERVER_CONTAINER" 2>/dev/null || true
+    
+    # Run signing-server container
+    docker run -d \
+        --name "$SIGNING_SERVER_CONTAINER" \
+        -p "$SIGNING_SERVER_PORT:8080" \
+        "$SIGNING_SERVER_IMAGE" \
+        --listen-addr=:8080 \
+        --auto-generate=true
+    
+    # Wait for signing-server to be ready
+    log_info "Waiting for signing-server to be ready..."
+    for i in {1..20}; do
+        if curl -sf "http://localhost:$SIGNING_SERVER_PORT/health" >/dev/null 2>&1; then
+            log_info "Signing server is running at http://localhost:$SIGNING_SERVER_PORT"
+            return 0
+        fi
+        sleep 0.5
+    done
+    
+    log_error "Signing server failed to start"
+    docker logs "$SIGNING_SERVER_CONTAINER"
+    exit 1
+}
+
+get_signing_cert() {
+    log_info "Fetching signing certificate from signing-server..."
+    
+    local cert_dir="$PROJECT_ROOT/tmp/certs"
+    
+    # Fetch the certificate from local signing-server
+    curl -sf "http://localhost:$SIGNING_SERVER_PORT/signingcert" > "$cert_dir/signing-cert.pem"
+    
+    if [[ ! -s "$cert_dir/signing-cert.pem" ]]; then
+        log_error "Failed to fetch signing certificate"
+        exit 1
+    fi
+    
+    log_info "Signing certificate saved to $cert_dir/signing-cert.pem"
+}
+
 create_systemd_service() {
     log_info "Creating systemd service file..."
     
@@ -102,6 +164,7 @@ ExecStart=/usr/local/bin/kubelet-proxy \
     --listen-addr 127.0.0.1:6444 \
     --tls-cert /etc/kubelet-proxy/kubelet-proxy.crt \
     --tls-key /etc/kubelet-proxy/kubelet-proxy.key \
+    --signature-verification-cert /etc/kubelet-proxy/signing-cert.pem \
     --log-requests=true \
     --log-pod-payloads=false
 
@@ -190,6 +253,7 @@ chmod +x /usr/local/bin/kubelet-proxy
 
 mv "$STAGING_DIR/kubelet-proxy.crt" /etc/kubelet-proxy/
 mv "$STAGING_DIR/kubelet-proxy.key" /etc/kubelet-proxy/
+mv "$STAGING_DIR/signing-cert.pem" /etc/kubelet-proxy/
 
 mv "$STAGING_DIR/kubelet-proxy.service" /etc/systemd/system/
 
@@ -268,6 +332,7 @@ deploy_to_node() {
     docker cp "$PROJECT_ROOT/bin/kubelet-proxy-linux-amd64" "$WORKER_NODE_NAME:$staging_dir/kubelet-proxy"
     docker cp "$cert_dir/kubelet-proxy.crt" "$WORKER_NODE_NAME:$staging_dir/"
     docker cp "$cert_dir/kubelet-proxy.key" "$WORKER_NODE_NAME:$staging_dir/"
+    docker cp "$cert_dir/signing-cert.pem" "$WORKER_NODE_NAME:$staging_dir/"
     docker cp "$tmp_dir/kubelet-proxy.service" "$WORKER_NODE_NAME:$staging_dir/"
     docker cp "$tmp_dir/create-proxy-kubeconfig.sh" "$WORKER_NODE_NAME:$staging_dir/"
     docker cp "$tmp_dir/setup-node.sh" "$WORKER_NODE_NAME:$staging_dir/"
@@ -308,23 +373,26 @@ print_usage() {
     echo ""
     echo "NOTE: kubelet-proxy is installed on the WORKER node only."
     echo "      Pods scheduled to the control-plane will bypass the proxy."
+    echo "      Signature verification is ENABLED - unsigned pods will be rejected."
     echo ""
     echo "1. Check kubelet-proxy logs on worker:"
     echo "   docker exec $WORKER_NODE_NAME journalctl -u kubelet-proxy -f"
     echo ""
-    echo "2. Create a test pod on worker (should be allowed):"
-    echo "   kubectl run test-allowed --image=nginx --restart=Never"
-    echo "   kubectl get pods -o wide  # Check it's on the worker node"
+    echo "2. Sign and deploy a pod (will be allowed):"
+    echo "   ./scripts/sign-pod.sh sign-spec examples/test-pod.yaml | kubectl apply -f -"
     echo ""
-    echo "3. Create a pod in blocked namespace (should be rejected on worker):"
-    echo "   kubectl create namespace blocked-test"
-    echo "   kubectl run test-blocked --image=nginx --restart=Never -n blocked-test"
-    echo "   kubectl get pods -n blocked-test -o wide  # Should show Failed status"
+    echo "3. Deploy an unsigned pod (will be rejected):"
+    echo "   kubectl run test-unsigned --image=nginx --restart=Never"
+    echo "   kubectl get pod test-unsigned  # Should show Failed status"
     echo ""
-    echo "4. Check kubelet logs on worker:"
-    echo "   docker exec $WORKER_NODE_NAME journalctl -u kubelet -f"
+    echo "4. Check signing-server:"
+    echo "   docker logs $SIGNING_SERVER_CONTAINER"
+    echo "   curl http://localhost:$SIGNING_SERVER_PORT/health"
     echo ""
-    echo "5. Clean up:"
+    echo "5. Run signature verification tests:"
+    echo "   make test-signature"
+    echo ""
+    echo "6. Clean up:"
     echo "   kind delete cluster --name $CLUSTER_NAME"
     echo ""
 }
@@ -345,11 +413,14 @@ main() {
     # Run deployment steps
     cleanup
     build_binary
+    build_signing_server_image
     generate_proxy_certs
     create_systemd_service
     create_kubelet_proxy_kubeconfig
     create_setup_script
     create_cluster
+    deploy_signing_server
+    get_signing_cert
     deploy_to_node
     verify_deployment
     print_usage
