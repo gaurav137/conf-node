@@ -189,6 +189,10 @@ Each entry in `containers` or `initContainers` is keyed by container name and co
 | Field | Type | Description |
 |-------|------|-------------|
 | `image` | `string` | The container image (supports wildcards in verification) |
+| `command` | `string[]` | Container entrypoint array (overrides ENTRYPOINT) |
+| `args` | `string[]` | Arguments to the entrypoint (overrides CMD) |
+| `env` | `object[]` | Environment variables with `name` and `value` fields |
+| `volumeMounts` | `object[]` | Volume mounts with `name`, `mountPath`, and optional `readOnly` fields |
 | `privileged` | `boolean` | Present and `true` if `securityContext.privileged: true` |
 | `capabilities` | `string[]` | Sorted list of Linux capabilities from `securityContext.capabilities.add` |
 
@@ -196,6 +200,7 @@ Each entry in `containers` or `initContainers` is keyed by container name and co
 
 - **Per-container tracking**: Each container is tracked by name, ensuring the pod spec containers match exactly
 - **Omitted fields**: Fields are only included in the policy if they have non-empty or non-false values
+- **Environment variables**: Only env vars with direct `value` are included; `valueFrom` references are excluded
 - **Deterministic serialization**: The policy is serialized as compact JSON with sorted keys (no whitespace) to ensure consistent signatures
 - **Base64 encoding**: The policy JSON is base64-encoded before signing and stored in the annotation
 
@@ -210,6 +215,15 @@ spec:
   containers:
     - name: app
       image: nginx:latest
+      command: ["/bin/sh"]
+      args: ["-c", "nginx -g 'daemon off;'"]
+      env:
+        - name: LOG_LEVEL
+          value: "info"
+      volumeMounts:
+        - name: config
+          mountPath: /etc/nginx/conf.d
+          readOnly: true
       securityContext:
         privileged: true
         capabilities:
@@ -227,9 +241,13 @@ The generated policy would be:
   "allowHostNetwork": true,
   "containers": {
     "app": {
+      "args": ["-c", "nginx -g 'daemon off;'"],
       "capabilities": ["NET_ADMIN", "SYS_TIME"],
+      "command": ["/bin/sh"],
+      "env": [{"name": "LOG_LEVEL", "value": "info"}],
       "image": "nginx:latest",
-      "privileged": true
+      "privileged": true,
+      "volumeMounts": [{"mountPath": "/etc/nginx/conf.d", "name": "config", "readOnly": true}]
     },
     "sidecar": {
       "image": "envoyproxy/envoy:v1.28"
@@ -251,9 +269,12 @@ The generated policy would be:
 During admission, kubelet-proxy verifies:
 1. **Container name matching**: Every container in the pod must have a corresponding entry in the policy (by name)
 2. **Image matching**: Each container's image must match its policy entry (wildcards supported)
-3. **Security context matching**: `privileged` and `capabilities` must match exactly per container
-4. **Host namespace matching**: `hostNetwork`, `hostPID`, `hostIPC` must match the policy
-5. **Node selector matching**: Node selectors must match exactly
+3. **Command and args matching**: `command` and `args` must match exactly per container
+4. **Environment variables matching**: Environment variables (with direct values) must match exactly
+5. **Volume mounts matching**: Volume mounts must match by name, mountPath, and readOnly flag
+6. **Security context matching**: `privileged` and `capabilities` must match exactly per container
+7. **Host namespace matching**: `hostNetwork`, `hostPID`, `hostIPC` must match the policy
+8. **Node selector matching**: Node selectors must match exactly
 
 ##### Viewing a Policy
 

@@ -29,11 +29,36 @@ type ContainerPolicy struct {
 	// Image is the allowed container image (supports wildcards)
 	Image string `json:"image,omitempty"`
 
+	// Command is the entrypoint array (overrides container ENTRYPOINT)
+	Command []string `json:"command,omitempty"`
+
+	// Args are the arguments to the entrypoint (overrides container CMD)
+	Args []string `json:"args,omitempty"`
+
+	// Env lists environment variables for the container
+	Env []EnvVar `json:"env,omitempty"`
+
+	// VolumeMounts lists volume mounts for the container
+	VolumeMounts []VolumeMount `json:"volumeMounts,omitempty"`
+
 	// Privileged indicates whether the container can run as privileged
 	Privileged bool `json:"privileged,omitempty"`
 
 	// Capabilities lists allowed Linux capabilities to add
 	Capabilities []string `json:"capabilities,omitempty"`
+}
+
+// EnvVar represents an environment variable
+type EnvVar struct {
+	Name  string `json:"name"`
+	Value string `json:"value,omitempty"`
+}
+
+// VolumeMount represents a volume mount
+type VolumeMount struct {
+	Name      string `json:"name"`
+	MountPath string `json:"mountPath"`
+	ReadOnly  bool   `json:"readOnly,omitempty"`
 }
 
 // Policy defines what a pod is allowed to do
@@ -284,6 +309,26 @@ func (c *PolicyVerificationController) checkHostNamespaces(spec map[string]inter
 
 // checkContainerSecurityContextAgainstPolicy checks a container's security context against its policy
 func (c *PolicyVerificationController) checkContainerSecurityContextAgainstPolicy(container map[string]interface{}, name, containerType string, policy *ContainerPolicy) error {
+	// Check command
+	if err := c.checkCommand(container, name, containerType, policy); err != nil {
+		return err
+	}
+
+	// Check args
+	if err := c.checkArgs(container, name, containerType, policy); err != nil {
+		return err
+	}
+
+	// Check environment variables
+	if err := c.checkEnvVars(container, name, containerType, policy); err != nil {
+		return err
+	}
+
+	// Check volume mounts
+	if err := c.checkVolumeMounts(container, name, containerType, policy); err != nil {
+		return err
+	}
+
 	securityContext, _ := container["securityContext"].(map[string]interface{})
 
 	// Check privileged
@@ -315,6 +360,143 @@ func (c *PolicyVerificationController) checkContainerSecurityContextAgainstPolic
 	}
 
 	return nil
+}
+
+// checkCommand verifies the container's command matches the policy
+func (c *PolicyVerificationController) checkCommand(container map[string]interface{}, name, containerType string, policy *ContainerPolicy) error {
+	var podCommand []string
+	if cmd, ok := container["command"].([]interface{}); ok {
+		for _, c := range cmd {
+			if s, ok := c.(string); ok {
+				podCommand = append(podCommand, s)
+			}
+		}
+	}
+
+	if !c.stringSlicesEqual(podCommand, policy.Command) {
+		return fmt.Errorf("%s '%s': command %v does not match policy command %v", containerType, name, podCommand, policy.Command)
+	}
+	return nil
+}
+
+// checkArgs verifies the container's args match the policy
+func (c *PolicyVerificationController) checkArgs(container map[string]interface{}, name, containerType string, policy *ContainerPolicy) error {
+	var podArgs []string
+	if args, ok := container["args"].([]interface{}); ok {
+		for _, a := range args {
+			if s, ok := a.(string); ok {
+				podArgs = append(podArgs, s)
+			}
+		}
+	}
+
+	if !c.stringSlicesEqual(podArgs, policy.Args) {
+		return fmt.Errorf("%s '%s': args %v does not match policy args %v", containerType, name, podArgs, policy.Args)
+	}
+	return nil
+}
+
+// checkEnvVars verifies the container's environment variables match the policy
+func (c *PolicyVerificationController) checkEnvVars(container map[string]interface{}, name, containerType string, policy *ContainerPolicy) error {
+	var podEnv []EnvVar
+	if env, ok := container["env"].([]interface{}); ok {
+		for _, e := range env {
+			if envMap, ok := e.(map[string]interface{}); ok {
+				envVar := EnvVar{}
+				if n, ok := envMap["name"].(string); ok {
+					envVar.Name = n
+				}
+				if v, ok := envMap["value"].(string); ok {
+					envVar.Value = v
+				}
+				// Only include env vars with direct values (not valueFrom)
+				if envVar.Name != "" && envMap["valueFrom"] == nil {
+					podEnv = append(podEnv, envVar)
+				}
+			}
+		}
+	}
+
+	if !c.envVarsEqual(podEnv, policy.Env) {
+		return fmt.Errorf("%s '%s': env vars do not match policy", containerType, name)
+	}
+	return nil
+}
+
+// checkVolumeMounts verifies the container's volume mounts match the policy
+func (c *PolicyVerificationController) checkVolumeMounts(container map[string]interface{}, name, containerType string, policy *ContainerPolicy) error {
+	var podMounts []VolumeMount
+	if mounts, ok := container["volumeMounts"].([]interface{}); ok {
+		for _, m := range mounts {
+			if mountMap, ok := m.(map[string]interface{}); ok {
+				mount := VolumeMount{}
+				if n, ok := mountMap["name"].(string); ok {
+					mount.Name = n
+				}
+				if p, ok := mountMap["mountPath"].(string); ok {
+					mount.MountPath = p
+				}
+				if r, ok := mountMap["readOnly"].(bool); ok {
+					mount.ReadOnly = r
+				}
+				podMounts = append(podMounts, mount)
+			}
+		}
+	}
+
+	if !c.volumeMountsEqual(podMounts, policy.VolumeMounts) {
+		return fmt.Errorf("%s '%s': volume mounts do not match policy", containerType, name)
+	}
+	return nil
+}
+
+// stringSlicesEqual checks if two string slices are equal (order matters)
+func (c *PolicyVerificationController) stringSlicesEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// envVarsEqual checks if two env var slices contain the same elements
+func (c *PolicyVerificationController) envVarsEqual(a, b []EnvVar) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	// Create map for comparison
+	aMap := make(map[string]string)
+	for _, env := range a {
+		aMap[env.Name] = env.Value
+	}
+	for _, env := range b {
+		if val, ok := aMap[env.Name]; !ok || val != env.Value {
+			return false
+		}
+	}
+	return true
+}
+
+// volumeMountsEqual checks if two volume mount slices contain the same elements
+func (c *PolicyVerificationController) volumeMountsEqual(a, b []VolumeMount) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	// Create map for comparison
+	aMap := make(map[string]VolumeMount)
+	for _, m := range a {
+		aMap[m.Name] = m
+	}
+	for _, m := range b {
+		if existing, ok := aMap[m.Name]; !ok || existing.MountPath != m.MountPath || existing.ReadOnly != m.ReadOnly {
+			return false
+		}
+	}
+	return true
 }
 
 // capabilitySetsEqual checks if two capability slices contain the same elements

@@ -89,6 +89,39 @@ def extract_container_policy(container):
     if 'image' in container:
         container_policy['image'] = container['image']
     
+    # Command (entrypoint)
+    if 'command' in container:
+        container_policy['command'] = container['command']
+    
+    # Args
+    if 'args' in container:
+        container_policy['args'] = container['args']
+    
+    # Environment variables (only those with direct values, not valueFrom)
+    env_vars = []
+    for env in container.get('env', []):
+        if 'name' in env and 'value' in env and 'valueFrom' not in env:
+            env_vars.append({'name': env['name'], 'value': env['value']})
+    if env_vars:
+        # Sort by name for deterministic output
+        container_policy['env'] = sorted(env_vars, key=lambda x: x['name'])
+    
+    # Volume mounts
+    volume_mounts = []
+    for mount in container.get('volumeMounts', []):
+        vm = {}
+        if 'name' in mount:
+            vm['name'] = mount['name']
+        if 'mountPath' in mount:
+            vm['mountPath'] = mount['mountPath']
+        if mount.get('readOnly'):
+            vm['readOnly'] = True
+        if vm:
+            volume_mounts.append(vm)
+    if volume_mounts:
+        # Sort by name for deterministic output
+        container_policy['volumeMounts'] = sorted(volume_mounts, key=lambda x: x.get('name', ''))
+    
     # Extract security context settings
     sec_ctx = container.get('securityContext', {})
     

@@ -1,7 +1,15 @@
 {
   "containers": {
     "test": {
-      "image": "busybox:latest"
+      "args": [
+        "3600"
+      ],
+      "command": [
+        "sleep"
+      ],
+      "env": [],
+      "image": "busybox:latest",
+      "volumeMounts": []
     }
   },
   "nodeSelector": {

@@ -18,6 +18,10 @@ Each policy JSON follows the per-container structure:
   "containers": {
     "<container-name>": {
       "image": "<image>",
+      "command": ["cmd"],           // optional
+      "args": ["arg1", "arg2"],     // optional
+      "env": [{"name": "X", "value": "Y"}], // optional
+      "volumeMounts": [{"name": "vol", "mountPath": "/mnt"}], // optional
       "privileged": true,           // optional
       "capabilities": ["CAP_NAME"]  // optional
     }

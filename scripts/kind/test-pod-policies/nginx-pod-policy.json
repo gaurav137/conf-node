@@ -1,7 +1,11 @@
 {
   "containers": {
     "test": {
-      "image": "nginx:latest"
+      "args": [],
+      "command": [],
+      "env": [],
+      "image": "nginx:latest",
+      "volumeMounts": []
     }
   },
   "nodeSelector": {
