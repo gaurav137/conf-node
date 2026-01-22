@@ -83,7 +83,7 @@ Instructions to generate deploy-aks.sh
 - Add a node selector label on the above node to help pods pick nodes that require pod policy.
 
 
-Instuctions to generate test-pod-policies.sh
+Instructions to generate test-pod-policies.sh
 - Assume a setup was created previously using deploy-aks.sh.
 - Create a sample pod with the toleration and node selector that was set on the VM node and test that the pod gets scheduled on the Azure VM node and runs successfully.
 - Don't cleanup up the sample pod so that it can be inspected after the test finishes.
