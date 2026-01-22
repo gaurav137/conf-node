@@ -23,6 +23,7 @@ curl -fsSL https://raw.githubusercontent.com/gaurav137/conf-inferencing/main/scr
 | JSON Field | Description |
 |------------|-------------|
 | `signingCertUrl` | URL to download the signing certificate from |
+| `signingCertUrlCaCert` | Path to CA certificate for verifying the signing cert URL (for HTTPS with self-signed certs) |
 | `signingCertFile` | Path to local signing certificate file (alternative to URL) |
 | `localBinary` | Path to local kubelet-proxy binary (skips GitHub download, for testing) |
 | `version` | Kubelet-proxy version to install (default: latest from GitHub releases) |
