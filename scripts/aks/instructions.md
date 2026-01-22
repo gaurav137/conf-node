@@ -79,3 +79,11 @@ Instuctions to generate deploy-aks.sh
     Wait for a few minutes for kubeletRunning value to be true and kubeletReady value to be Ready. Error out if this does not happen and invoke "journalctl -u aks-flex-node-agent --since" to dump some logs to help indicate the issue.
 - If any of the SSH commands/script that are executed in the Azure VM fails then don't proceed further.
 - Run kubectl get nodes to confirm that the Azure VM is showing up as a node on the AKS cluster. A node with the same name as the Azure VM name should appear.
+- Add a taint "pod-policy=required:NoSchedule" on the above node to indicate only pods with a pod policy can be scheduled on it.
+- Add a node selector label on the above node to help pods pick nodes that require pod policy.
+
+
+Instuctions to generate test-pod-policies.sh
+- Assume a setup was created previously using deploy-aks.sh.
+- Create a sample pod with the toleration and node selector that was set on the VM node and test that the pod gets scheduled on the Azure VM node and runs successfully.
+- Don't cleanup up the sample pod so that it can be inspected after the test finishes.

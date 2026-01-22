@@ -502,6 +502,18 @@ verify_node_joined() {
         log_error "VM '$VM_NAME' is not showing up as a node in the AKS cluster"
         exit 1
     fi
+    
+    # Add taint to indicate only pods with pod policy can be scheduled on this node
+    log_info "Adding taint to node '$VM_NAME' to require pod policy..."
+    kubectl taint nodes "$VM_NAME" pod-policy=required:NoSchedule --overwrite
+    log_info "Taint added: pod-policy=required:NoSchedule"
+    
+    # Add node selector label to help pods pick nodes that require pod policy
+    log_info "Adding node selector label to node '$VM_NAME'..."
+    kubectl label nodes "$VM_NAME" pod-policy=required --overwrite
+    log_info "Label added: pod-policy=required"
+    
+    log_info "Node '$VM_NAME' successfully joined the cluster!"
 }
 
 # Print summary
