@@ -3,7 +3,7 @@
 # Deploy kubelet-proxy to AKS Flex Node
 #
 # This script deploys kubelet-proxy to an AKS Flex node that was previously
-# set up using deploy-aks.sh. It:
+# set up using deploy-cluster.sh. It:
 # 1. Deploys the signing-server as a local Docker container with TLS
 # 2. Builds the kubelet-proxy binary
 # 3. Copies the binary and signing certificate to the VM via SSH
@@ -16,7 +16,7 @@
 #   --help, -h     Show this help message
 #
 # Prerequisites:
-#   - deploy-aks.sh must have been run successfully
+#   - deploy-cluster.sh must have been run successfully
 #   - Docker must be installed and running
 #   - Go must be installed for building the binary
 #
@@ -67,7 +67,7 @@ get_resource_info() {
     # Verify SSH key exists
     if [[ ! -f "$SSH_PRIVATE_KEY_FILE" ]]; then
         log_error "SSH private key not found at: $SSH_PRIVATE_KEY_FILE"
-        log_error "Make sure deploy-aks.sh was run successfully"
+        log_error "Make sure deploy-cluster.sh was run successfully"
         exit 1
     fi
     

@@ -568,6 +568,13 @@ func (p *Proxy) rejectPodViaStatus(namespace, name, reason string) {
 	// Use strategic merge patch
 	req.Header.Set("Content-Type", "application/strategic-merge-patch+json")
 
+	// Add bearer token authentication (required for API server access)
+	if token, err := p.tokenProvider.GetToken(); err != nil {
+		p.logger.Printf("Warning: failed to get token for status patch: %v", err)
+	} else if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+
 	// Create a client with the same transport (includes TLS config)
 	client := &http.Client{
 		Transport: p.transport,

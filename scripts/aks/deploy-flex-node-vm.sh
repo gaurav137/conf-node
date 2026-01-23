@@ -1,4 +1,26 @@
 #!/bin/bash
+#
+# Deploy AKS Flex Node VM
+#
+# This script creates an Ubuntu 24.04 Azure VM and joins it as a flex node
+# to an existing AKS cluster created by deploy-cluster.sh.
+#
+# Usage:
+#   ./deploy-flex-node-vm.sh [options]
+#
+# Options:
+#   --help, -h     Show this help message
+#
+# Environment Variables:
+#   LOCATION         Azure region (default: centralindia)
+#   VM_SIZE          VM size (default: Standard_D2s_v3)
+#   VM_IMAGE         VM image (default: Ubuntu2404)
+#
+# Prerequisites:
+#   - deploy-cluster.sh must have been run successfully
+#   - Must be logged in to Azure (az login)
+#
+
 set -e
 
 # Colors for output
@@ -13,13 +35,11 @@ log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
 # Configuration
 LOCATION="${LOCATION:-centralindia}"
-KUBERNETES_VERSION="${KUBERNETES_VERSION:-}"
 VM_SIZE="${VM_SIZE:-Standard_D2s_v3}"
-AKS_NODE_COUNT="${AKS_NODE_COUNT:-}"
-AKS_NODE_VM_SIZE="${AKS_NODE_VM_SIZE:-Standard_D4ds_v5}"
 VM_IMAGE="${VM_IMAGE:-Ubuntu2404}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GENERATED_DIR="$SCRIPT_DIR/generated"
+PROJECT_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
 
 # Get currently logged in user info
 get_current_user() {
@@ -50,7 +70,6 @@ set_resource_names() {
     VM_NAME="${USERNAME}-flex-vm"
     RESOURCE_OWNER_MI_NAME="${USERNAME}-flex-resource-owner-mi"
     KUBELET_MI_NAME="${USERNAME}-flex-kubelet-mi"
-    SSH_KEY_NAME="${USERNAME}-flex-ssh"
     
     log_info "Resource group: $RESOURCE_GROUP"
     log_info "AKS cluster: $AKS_CLUSTER_NAME"
@@ -59,82 +78,17 @@ set_resource_names() {
     log_info "Kubelet managed identity: $KUBELET_MI_NAME"
 }
 
-# Create resource group with SkipCleanup tag
-create_resource_group() {
-    log_info "Creating resource group: $RESOURCE_GROUP in $LOCATION..."
+# Verify AKS cluster exists
+verify_aks_cluster() {
+    log_info "Verifying AKS cluster exists..."
     
-    if az group show --name "$RESOURCE_GROUP" &>/dev/null; then
-        log_warn "Resource group $RESOURCE_GROUP already exists"
-    else
-        az group create \
-            --name "$RESOURCE_GROUP" \
-            --location "$LOCATION" \
-            --tags SkipCleanup=true \
-            --output none
-        
-        log_info "Resource group created with SkipCleanup=true tag"
-    fi
-}
-
-# Create AKS cluster with Azure RBAC enabled
-create_aks_cluster() {
-    log_info "Creating AKS cluster: $AKS_CLUSTER_NAME..."
-    
-    if az aks show --resource-group "$RESOURCE_GROUP" --name "$AKS_CLUSTER_NAME" &>/dev/null; then
-        log_warn "AKS cluster $AKS_CLUSTER_NAME already exists"
-    else
-        # Build AKS create command with Azure RBAC enabled and dev/test configuration
-        local aks_create_cmd="az aks create \
-            --resource-group $RESOURCE_GROUP \
-            --name $AKS_CLUSTER_NAME \
-            --location $LOCATION \
-            --node-vm-size $AKS_NODE_VM_SIZE \
-            --enable-aad \
-            --enable-azure-rbac \
-            --aad-admin-group-object-ids '' \
-            --output none"
-        
-        # Add node count only if specified
-        if [[ -n "$AKS_NODE_COUNT" ]]; then
-            aks_create_cmd="$aks_create_cmd --node-count $AKS_NODE_COUNT"
-        fi
-        
-        # Add kubernetes version only if specified
-        if [[ -n "$KUBERNETES_VERSION" ]]; then
-            aks_create_cmd="$aks_create_cmd --kubernetes-version $KUBERNETES_VERSION"
-        fi
-        
-        eval $aks_create_cmd
-        
-        log_info "AKS cluster created"
+    if ! az aks show --resource-group "$RESOURCE_GROUP" --name "$AKS_CLUSTER_NAME" &>/dev/null; then
+        log_error "AKS cluster '$AKS_CLUSTER_NAME' not found in resource group '$RESOURCE_GROUP'"
+        log_error "Please run deploy-cluster.sh first to create the AKS cluster"
+        exit 1
     fi
     
-    # Add current user as cluster admin
-    log_info "Adding current user as AKS cluster admin..."
-    
-    # Get the AKS cluster resource ID
-    AKS_ID=$(az aks show --resource-group "$RESOURCE_GROUP" --name "$AKS_CLUSTER_NAME" --query id -o tsv)
-    
-    # Assign Azure Kubernetes Service RBAC Cluster Admin role to current user
-    az role assignment create \
-        --assignee "$CURRENT_USER_ID" \
-        --role "Azure Kubernetes Service RBAC Cluster Admin" \
-        --scope "$AKS_ID" \
-        --output none 2>/dev/null || log_warn "Role assignment may already exist"
-    
-    log_info "Current user added as cluster admin"
-    
-    # Tag the MC (managed cluster) resource group with SkipCleanup=true
-    log_info "Setting SkipCleanup tag on MC resource group..."
-    
-    MC_RESOURCE_GROUP=$(az aks show --resource-group "$RESOURCE_GROUP" --name "$AKS_CLUSTER_NAME" --query nodeResourceGroup -o tsv)
-    
-    az group update \
-        --name "$MC_RESOURCE_GROUP" \
-        --tags SkipCleanup=true \
-        --output none
-    
-    log_info "MC resource group ($MC_RESOURCE_GROUP) tagged with SkipCleanup=true"
+    log_info "AKS cluster '$AKS_CLUSTER_NAME' found"
 }
 
 # Create user assigned managed identities
@@ -255,18 +209,6 @@ create_vm() {
     echo ""
 }
 
-# Get AKS credentials
-get_aks_credentials() {
-    log_info "Getting AKS credentials..."
-    
-    az aks get-credentials \
-        --resource-group "$RESOURCE_GROUP" \
-        --name "$AKS_CLUSTER_NAME" \
-        --overwrite-existing
-    
-    log_info "AKS credentials configured for kubectl"
-}
-
 # Generate config file for aks-flex-node
 generate_config_file() {
     log_info "Generating aks-flex-node-config.json..."
@@ -289,7 +231,7 @@ generate_config_file() {
     # Ensure resourceGroups has correct casing (capital G) as it's case sensitive
     aks_resource_id=$(echo "$aks_resource_id" | sed 's|/resourcegroups/|/resourceGroups/|g')
     
-    # Get Kubernetes version from the cluster (in case we didn't specify one)
+    # Get Kubernetes version from the cluster
     local k8s_version
     k8s_version=$(az aks show --resource-group "$RESOURCE_GROUP" --name "$AKS_CLUSTER_NAME" --query currentKubernetesVersion -o tsv)
     
@@ -333,10 +275,29 @@ install_aks_flex_node() {
     
     local ssh_opts="-i $SSH_PRIVATE_KEY_FILE -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
     
+    # Copy kubelet-proxy uninstall.sh to VM first
+    log_info "Copying kubelet-proxy uninstall.sh to VM..."
+    local staging_dir="/tmp/kubelet-proxy-staging"
+    ssh $ssh_opts azureuser@$VM_PUBLIC_IP "mkdir -p $staging_dir" || {
+        log_error "Failed to create staging directory on VM"
+        exit 1
+    }
+    
+    scp $ssh_opts "$PROJECT_ROOT/scripts/uninstall.sh" azureuser@$VM_PUBLIC_IP:$staging_dir/uninstall.sh || {
+        log_error "Failed to copy uninstall.sh to VM"
+        exit 1
+    }
+    
     # Create a temporary setup script
     local setup_script=$(cat <<'SCRIPT_EOF'
 #!/bin/bash
 set -e
+
+# Uninstall kubelet-proxy if present (do this first)
+echo "Uninstalling kubelet-proxy if present..."
+if [[ -f /tmp/kubelet-proxy-staging/uninstall.sh ]]; then
+    sudo bash /tmp/kubelet-proxy-staging/uninstall.sh || echo "kubelet-proxy uninstall returned non-zero (may not be installed)"
+fi
 
 # Function to install Azure CLI with retry for dpkg lock
 install_az_cli() {
@@ -372,8 +333,8 @@ fi
 echo "Logging in with managed identity..."
 az login --identity --client-id "$RESOURCE_OWNER_MI_CLIENT_ID"
 
-# Cleanup previous setup if any
-echo "Running uninstall script to cleanup previous setup..."
+# Cleanup previous aks-flex-node setup if any
+echo "Running aks-flex-node uninstall script to cleanup previous setup..."
 curl -fsSL https://gsinhaflexsa.z13.web.core.windows.net/scripts/uninstall.sh | sudo bash -s -- --force
 
 echo "Setup completed successfully"
@@ -487,6 +448,18 @@ INSTALL_SCRIPT_EOF
     log_info "AKS Flex Node installation completed on VM"
 }
 
+# Get AKS credentials
+get_aks_credentials() {
+    log_info "Getting AKS credentials..."
+    
+    az aks get-credentials \
+        --resource-group "$RESOURCE_GROUP" \
+        --name "$AKS_CLUSTER_NAME" \
+        --overwrite-existing
+    
+    log_info "AKS credentials configured for kubectl"
+}
+
 # Verify the VM node joined the AKS cluster
 verify_node_joined() {
     log_info "Verifying Azure VM is showing up as a node on the AKS cluster..."
@@ -520,21 +493,18 @@ verify_node_joined() {
 print_summary() {
     echo ""
     log_info "=========================================="
-    log_info "  Deployment Summary"
+    log_info "  Flex Node VM Deployment Summary"
     log_info "=========================================="
     echo ""
     echo "Resource Group:     $RESOURCE_GROUP"
     echo "Location:           $LOCATION"
-    echo ""
     echo "AKS Cluster:        $AKS_CLUSTER_NAME"
-    echo "Kubernetes Version: ${KUBERNETES_VERSION:-<default>}"
-    echo "Node Count:         $AKS_NODE_COUNT"
-    echo "Node VM Size:       $AKS_NODE_VM_SIZE"
     echo ""
     echo "VM Name:            $VM_NAME"
     echo "VM Public IP:       $VM_PUBLIC_IP"
     echo "VM Admin User:      azureuser"
     echo "VM Image:           $VM_IMAGE"
+    echo "VM Size:            $VM_SIZE"
     echo ""
     echo "Resource Owner MI:  $RESOURCE_OWNER_MI_NAME"
     echo "Kubelet MI:         $KUBELET_MI_NAME"
@@ -548,21 +518,26 @@ print_summary() {
     echo "To SSH into the VM:"
     echo "  ssh -i $SSH_PRIVATE_KEY_FILE azureuser@$VM_PUBLIC_IP"
     echo ""
-    echo "To use kubectl with the AKS cluster:"
-    echo "  kubectl get nodes"
+    echo "Node taint and label applied:"
+    echo "  Taint: pod-policy=required:NoSchedule"
+    echo "  Label: pod-policy=required"
     echo ""
-    echo "To delete all resources:"
-    echo "  az group delete --name $RESOURCE_GROUP --yes --no-wait"
-    echo ""
+}
+
+# Print usage
+usage() {
+    head -22 "$0" | grep -E "^#" | sed 's/^# \?//'
+    exit 0
 }
 
 # Main function
 main() {
-    log_info "Starting Azure deployment for kubelet-proxy testing"
+    log_info "Starting Azure Flex Node VM deployment"
     echo ""
     
     # Check prerequisites
     command -v az >/dev/null 2>&1 || { log_error "Azure CLI (az) is required but not installed"; exit 1; }
+    command -v kubectl >/dev/null 2>&1 || { log_error "kubectl is required but not installed"; exit 1; }
     
     # Check if logged in
     az account show &>/dev/null || { log_error "Not logged in to Azure. Run 'az login' first."; exit 1; }
@@ -573,38 +548,27 @@ main() {
     
     echo ""
     
+    # Verify AKS cluster exists
+    verify_aks_cluster
+    
     # Create resources
-    create_resource_group
     create_managed_identities
-    create_aks_cluster
     create_vm
-    get_aks_credentials
     generate_config_file
     install_aks_flex_node
+    get_aks_credentials
     verify_node_joined
     
     # Print summary
     print_summary
     
-    log_info "Deployment complete!"
+    log_info "Flex Node VM deployment complete!"
 }
 
 # Parse arguments
 case "${1:-}" in
     --help|-h)
-        echo "Usage: $0 [options]"
-        echo ""
-        echo "Options:"
-        echo "  --help, -h     Show this help message"
-        echo ""
-        echo "Environment Variables:"
-        echo "  LOCATION              Azure region (default: centralindia)"
-        echo "  KUBERNETES_VERSION    AKS Kubernetes version (default: AKS default)"
-        echo "  VM_SIZE               VM size (default: Standard_D2s_v3)"
-        echo "  AKS_NODE_COUNT        AKS node count (default: AKS default)"
-        echo "  AKS_NODE_VM_SIZE      AKS node VM size (default: Standard_D4ds_v5)"
-        echo ""
-        exit 0
+        usage
         ;;
     *)
         main "$@"

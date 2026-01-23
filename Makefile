@@ -98,6 +98,16 @@ test-kind: test-pod-policies
 test-pod-policies:
 	@./scripts/kind/test-pod-policies.sh
 
+## deploy-aks: Deploy AKS cluster with flex node and kubelet-proxy
+deploy-aks:
+	@./scripts/aks/deploy-cluster.sh
+	@./scripts/aks/deploy-flex-node-vm.sh
+	@./scripts/aks/deploy-kubelet-proxy.sh
+
+## test-aks: Run pod policy verification tests against the AKS cluster
+test-aks:
+	@./scripts/aks/test-pod-policies.sh
+
 ## help: Show this help message
 help:
 	@echo "Usage: make [target]"

@@ -1,9 +1,9 @@
-Instructions to generate deploy-aks.sh
+Instructions to generate deploy-cluster.sh
 
 - Use az cli for any Azure interactions.
 - Use default Azure location as central india unless overridden.
 - Always ensure any help usage in the script is up to date with the changes made per these instructions.
-- Have any generated/downloaded files be placed under a "generated" folder under the folder that has deploy-aks.sh script.
+- Have any generated/downloaded files be placed under a "generated" folder under the folder that has deploy-cluster.sh script.
 - Create a resource group in azure .The resource group name should have the format (<currently logged in username>-flex-test-rg). Set SkipCleanup=true as an ARM tag on the resource group. 
 - SkipCleanup=true ARM tag is only meant for resource groups. Don't apply it on resources.
 - Creates an Azure RBAC enabled AKS cluster adding the currently logged in user (via az login) as admin on the cluster.
@@ -13,6 +13,9 @@ Instructions to generate deploy-aks.sh
   - Don't set any default kubernetes version and pass in the CLI unless a value is provided.
   - Don't set any default node cound and aass in the CLI unless a value is provided.
   - Don't specify any `--generate-ssh-keys` and `--tier` options.
+
+Instructions to generate deploy-flex-node-vm.sh
+- Assume a setup was created previously using deploy-cluster.sh.
 - Create an ubuntu 24.04 Azure VM:
   - VM should have SSH enabled and download the SSH private key file that can be used later to SSH into the VM post creation.
   - VM should have two user assigned managed identities:
@@ -46,6 +49,7 @@ Instructions to generate deploy-aks.sh
     }
     ```
 - Run the following commands in the Azure VM via SSH. You can generate a temporary shell script to gather the below steps and run them togther.
+  - Run scripts/uninstall.sh script to cleanup any previous kubelet-proxy install.
   - 'curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash' if az cli is not installed.
   - az cli installation may fail with below error and if so retry it.
     Reading package lists...
@@ -83,13 +87,13 @@ Instructions to generate deploy-aks.sh
 - Add a node selector label on the above node to help pods pick nodes that require pod policy.
 
 Instructions to generate deploy-kubelet-proxy.sh
-  - Assume a setup was created previously using deploy-aks.sh.
+  - Assume a setup was created previously using deploy-cluster.sh and deploy-flex-node-vm.sh.
   - Deploy the signing-server as a local docker container with TLS.
-  - Run scripts/unintall.sh script to cleanup any previous install.
+  - Run scripts/uninstall.sh script to cleanup any previous install.
   - Run scripts/install.sh script in the Azure VM via ssh using the --signing-cert-file and --local-binary options.
 
 Instructions to generate test-pod-policies.sh
-- Assume a setup was created previously using deploy-aks.sh and deploy-kubelet-proxy.sh.
+- Assume a setup was created previously using deploy-cluster.sh and deploy-kubelet-proxy.sh.
 - Generate a sample pod yaml that conforms to the nginx-pod-policy.json file present under pod-policies.
   - The sample pod should have the toleration and node selector that was set on the VM node.
 - Using the signing-server to sign the nginx-pod-policy.json and have the policy and signature applied as annotations on the pod.
