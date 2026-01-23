@@ -67,12 +67,80 @@ LOCAL_BINARY=""
 SKIP_KUBELET_RESTART=false
 CONFIG_FILE=""
 
-# Paths
-KUBELET_KUBECONFIG="/etc/kubernetes/kubelet.conf"
-PROXY_KUBECONFIG="/etc/kubernetes/kubelet-via-proxy.conf"
-KUBELET_CONFIG_BACKUP="/var/lib/kubelet/config.yaml.backup"
-KUBELET_DROPIN_DIR="/etc/systemd/system/kubelet.service.d"
-KUBELET_DROPIN_FILE="$KUBELET_DROPIN_DIR/20-kubelet-proxy.conf"
+# Environment detection
+DETECTED_ENV=""  # Will be set to "kind" or "aks-flex"
+
+# Environment-specific paths (will be set based on detected environment)
+KUBELET_KUBECONFIG=""
+PROXY_KUBECONFIG=""
+KUBELET_CONFIG_BACKUP=""
+KUBELET_DROPIN_DIR=""
+KUBELET_DROPIN_FILE=""
+
+# ============================================================================
+# Environment Detection
+# ============================================================================
+
+# Detect if running on AKS Flex node
+is_aks_flex_node() {
+    [[ -f "/usr/local/bin/aks-flex-node" ]]
+}
+
+# Detect if running on Kind worker node
+is_kind_node() {
+    # Kind nodes have specific characteristics:
+    # 1. Running inside a Docker container
+    # 2. Have /.dockerenv file
+    # 3. Have kind-specific paths
+    if [[ -f "/.dockerenv" ]] && grep -q "kind" /etc/hostname 2>/dev/null; then
+        return 0
+    fi
+    # Alternative: check for kind cluster label in kubelet args
+    if systemctl cat kubelet 2>/dev/null | grep -q "kind"; then
+        return 0
+    fi
+    # Check if kubelet kubeconfig exists at kind's default location
+    if [[ -f "/etc/kubernetes/kubelet.conf" ]] && [[ -f "/.dockerenv" ]]; then
+        return 0
+    fi
+    return 1
+}
+
+# Detect the environment and set environment-specific variables
+detect_environment() {
+    log_step "Detecting environment..."
+
+    if is_aks_flex_node; then
+        DETECTED_ENV="aks-flex"
+        log_info "Detected environment: AKS Flex node"
+        
+        # AKS Flex specific paths
+        KUBELET_KUBECONFIG="/var/lib/kubelet/kubeconfig"
+        PROXY_KUBECONFIG="/var/lib/kubelet/kubelet-via-proxy.conf"
+        KUBELET_CONFIG_BACKUP="/var/lib/kubelet/config.yaml.backup"
+        KUBELET_DROPIN_DIR="/etc/systemd/system/kubelet.service.d"
+        KUBELET_DROPIN_FILE="$KUBELET_DROPIN_DIR/20-kubelet-proxy.conf"
+        
+    elif is_kind_node; then
+        DETECTED_ENV="kind"
+        log_info "Detected environment: Kind worker node"
+        
+        # Kind specific paths
+        KUBELET_KUBECONFIG="/etc/kubernetes/kubelet.conf"
+        PROXY_KUBECONFIG="/etc/kubernetes/kubelet-via-proxy.conf"
+        KUBELET_CONFIG_BACKUP="/var/lib/kubelet/config.yaml.backup"
+        KUBELET_DROPIN_DIR="/etc/systemd/system/kubelet.service.d"
+        KUBELET_DROPIN_FILE="$KUBELET_DROPIN_DIR/20-kubelet-proxy.conf"
+        
+    else
+        log_error "Unsupported environment"
+        log_error "This script supports only:"
+        log_error "  - Kind worker nodes"
+        log_error "  - AKS Flex nodes"
+        exit 1
+    fi
+}
+
 
 usage() {
     head -40 "$0" | grep -E "^#" | sed 's/^# \?//'
@@ -214,7 +282,7 @@ check_prerequisites() {
         fi
     done
 
-    # Check kubelet kubeconfig exists
+    # Check kubelet kubeconfig exists (path is set by detect_environment)
     if [[ ! -f "$KUBELET_KUBECONFIG" ]]; then
         log_error "Kubelet kubeconfig not found at $KUBELET_KUBECONFIG"
         log_error "Is this a Kubernetes node with kubelet configured?"
@@ -412,6 +480,25 @@ fetch_signing_cert() {
 create_proxy_kubeconfig() {
     log_step "Creating proxy kubeconfig for kubelet..."
 
+    case "$DETECTED_ENV" in
+        kind)
+            create_proxy_kubeconfig_kind
+            ;;
+        aks-flex)
+            create_proxy_kubeconfig_aks_flex
+            ;;
+        *)
+            log_error "Unknown environment: $DETECTED_ENV"
+            exit 1
+            ;;
+    esac
+
+    chmod 600 "$PROXY_KUBECONFIG"
+    log_info "Proxy kubeconfig created at $PROXY_KUBECONFIG"
+}
+
+# Create proxy kubeconfig for Kind environment (uses client certificates)
+create_proxy_kubeconfig_kind() {
     # Extract client certificate and key paths from original kubeconfig
     local client_cert
     local client_key
@@ -436,7 +523,7 @@ create_proxy_kubeconfig() {
         exit 1
     fi
 
-    # Create new kubeconfig pointing to proxy
+    # Create new kubeconfig pointing to proxy with client certificate auth
     cat > "$PROXY_KUBECONFIG" <<EOF
 apiVersion: v1
 kind: Config
@@ -457,9 +544,65 @@ users:
     client-certificate: ${client_cert}
     client-key: ${client_key}
 EOF
+}
 
-    chmod 600 "$PROXY_KUBECONFIG"
-    log_info "Proxy kubeconfig created at $PROXY_KUBECONFIG"
+# Create proxy kubeconfig for AKS Flex environment (uses exec credential provider)
+create_proxy_kubeconfig_aks_flex() {
+    # AKS Flex uses exec-based credential provider
+    # Extract the exec configuration from the original kubeconfig
+    
+    local exec_command
+    local exec_api_version
+    
+    # Try to extract exec config using yq if available, otherwise use grep/awk
+    if command -v yq &>/dev/null; then
+        exec_command=$(yq -r '.users[0].user.exec.command // empty' "$KUBELET_KUBECONFIG" 2>/dev/null || true)
+        exec_api_version=$(yq -r '.users[0].user.exec.apiVersion // empty' "$KUBELET_KUBECONFIG" 2>/dev/null || true)
+    fi
+    
+    # Fallback: parse kubeconfig directly
+    if [[ -z "$exec_command" ]]; then
+        exec_command=$(grep -A5 'exec:' "$KUBELET_KUBECONFIG" | grep 'command:' | head -1 | awk '{print $2}')
+    fi
+    if [[ -z "$exec_api_version" ]]; then
+        exec_api_version=$(grep -A5 'exec:' "$KUBELET_KUBECONFIG" | grep 'apiVersion:' | head -1 | awk '{print $2}')
+    fi
+    
+    # Default values if not found
+    if [[ -z "$exec_command" ]]; then
+        exec_command="/var/lib/kubelet/token.sh"
+        log_warn "Could not extract exec command, using default: $exec_command"
+    fi
+    if [[ -z "$exec_api_version" ]]; then
+        exec_api_version="client.authentication.k8s.io/v1beta1"
+    fi
+    
+    log_info "Using exec credential provider: $exec_command"
+
+    # Create new kubeconfig pointing to proxy with exec auth
+    cat > "$PROXY_KUBECONFIG" <<EOF
+apiVersion: v1
+kind: Config
+clusters:
+- cluster:
+    certificate-authority: $PROXY_CERT_DIR/kubelet-proxy.crt
+    server: https://$PROXY_LISTEN_ADDR
+  name: proxy
+contexts:
+- context:
+    cluster: proxy
+    user: kubelet
+  name: proxy
+current-context: proxy
+users:
+- name: kubelet
+  user:
+    exec:
+      apiVersion: ${exec_api_version}
+      command: ${exec_command}
+      env: null
+      provideClusterInfo: false
+EOF
 }
 
 create_systemd_service() {
@@ -499,6 +642,22 @@ EOF
 configure_kubelet() {
     log_step "Configuring kubelet to use proxy..."
 
+    case "$DETECTED_ENV" in
+        kind)
+            configure_kubelet_kind
+            ;;
+        aks-flex)
+            configure_kubelet_aks_flex
+            ;;
+        *)
+            log_error "Unknown environment: $DETECTED_ENV"
+            exit 1
+            ;;
+    esac
+}
+
+# Configure kubelet for Kind environment
+configure_kubelet_kind() {
     # Backup original kubelet config if not already backed up
     if [[ -f /var/lib/kubelet/config.yaml && ! -f "$KUBELET_CONFIG_BACKUP" ]]; then
         cp /var/lib/kubelet/config.yaml "$KUBELET_CONFIG_BACKUP"
@@ -512,6 +671,33 @@ configure_kubelet() {
     cat > "$KUBELET_DROPIN_FILE" <<EOF
 [Service]
 Environment="KUBELET_KUBECONFIG_ARGS=--kubeconfig=$PROXY_KUBECONFIG --bootstrap-kubeconfig="
+EOF
+
+    log_info "Kubelet drop-in created at $KUBELET_DROPIN_FILE"
+}
+
+# Configure kubelet for AKS Flex environment
+configure_kubelet_aks_flex() {
+    # Backup original kubelet config if not already backed up
+    if [[ -f /var/lib/kubelet/config.yaml && ! -f "$KUBELET_CONFIG_BACKUP" ]]; then
+        cp /var/lib/kubelet/config.yaml "$KUBELET_CONFIG_BACKUP"
+        log_info "Original kubelet config backed up to $KUBELET_CONFIG_BACKUP"
+    fi
+
+    # Backup original kubelet kubeconfig
+    local kubeconfig_backup="${KUBELET_KUBECONFIG}.backup"
+    if [[ ! -f "$kubeconfig_backup" ]]; then
+        cp "$KUBELET_KUBECONFIG" "$kubeconfig_backup"
+        log_info "Original kubelet kubeconfig backed up to $kubeconfig_backup"
+    fi
+
+    # Create kubelet drop-in directory
+    mkdir -p "$KUBELET_DROPIN_DIR"
+
+    # Create drop-in to override kubeconfig path
+    cat > "$KUBELET_DROPIN_FILE" <<EOF
+[Service]
+Environment="KUBELET_KUBECONFIG_ARGS=--kubeconfig=$PROXY_KUBECONFIG"
 EOF
 
     log_info "Kubelet drop-in created at $KUBELET_DROPIN_FILE"
@@ -582,6 +768,7 @@ print_success() {
     log_info "=========================================="
     echo ""
     echo "Configuration:"
+    echo "  Environment:      $DETECTED_ENV"
     echo "  Version:          $VERSION"
     echo "  Binary:           $PROXY_BIN_PATH"
     echo "  Config directory: $PROXY_CERT_DIR"
@@ -609,6 +796,7 @@ main() {
     log_info "=========================================="
     echo ""
 
+    detect_environment
     check_prerequisites
     resolve_version
     download_binary

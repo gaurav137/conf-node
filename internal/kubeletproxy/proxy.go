@@ -38,7 +38,7 @@ type Proxy struct {
 	admissionController admission.Controller
 	transport           *http.Transport
 	logger              *log.Logger
-	bearerToken         string
+	tokenProvider       *TokenProvider
 
 	// Track rejected pods
 	rejectedPods   map[string]*admission.Decision // key: namespace/name
@@ -58,13 +58,16 @@ func New(cfg *Config, admissionController admission.Controller) (*Proxy, error) 
 
 	logger := log.New(os.Stdout, "[kubelet-proxy] ", log.LstdFlags|log.Lmicroseconds)
 
+	// Create token provider for API server authentication
+	tokenProvider := NewTokenProvider(cfg.LoadedKubeConfig, logger)
+
 	p := &Proxy{
 		config:              cfg,
 		apiServerURL:        apiServerURL,
 		admissionController: admissionController,
 		logger:              logger,
 		rejectedPods:        make(map[string]*admission.Decision),
-		bearerToken:         cfg.LoadedKubeConfig.BearerToken,
+		tokenProvider:       tokenProvider,
 	}
 
 	// Configure TLS for API server connection
@@ -126,8 +129,10 @@ func (p *Proxy) director(req *http.Request) {
 	req.Host = p.apiServerURL.Host
 
 	// Add bearer token authentication if available
-	if p.bearerToken != "" {
-		req.Header.Set("Authorization", "Bearer "+p.bearerToken)
+	if token, err := p.tokenProvider.GetToken(); err != nil {
+		p.logger.Printf("Warning: failed to get token: %v", err)
+	} else if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
 	}
 
 	// Force JSON responses instead of protobuf
@@ -304,8 +309,10 @@ func (p *Proxy) createUpstreamRequest(r *http.Request) *http.Request {
 	upstreamReq.Header.Set("Accept", "application/json")
 
 	// Add bearer token if available
-	if p.bearerToken != "" {
-		upstreamReq.Header.Set("Authorization", "Bearer "+p.bearerToken)
+	if token, err := p.tokenProvider.GetToken(); err != nil {
+		p.logger.Printf("Warning: failed to get token: %v", err)
+	} else if token != "" {
+		upstreamReq.Header.Set("Authorization", "Bearer "+token)
 	}
 
 	return upstreamReq

@@ -54,14 +54,31 @@ type NamedAuthInfo struct {
 
 // AuthInfo contains information about user credentials
 type AuthInfo struct {
-	ClientCertificate     string `yaml:"client-certificate,omitempty"`
-	ClientCertificateData string `yaml:"client-certificate-data,omitempty"`
-	ClientKey             string `yaml:"client-key,omitempty"`
-	ClientKeyData         string `yaml:"client-key-data,omitempty"`
-	Token                 string `yaml:"token,omitempty"`
-	TokenFile             string `yaml:"tokenFile,omitempty"`
-	Username              string `yaml:"username,omitempty"`
-	Password              string `yaml:"password,omitempty"`
+	ClientCertificate     string      `yaml:"client-certificate,omitempty"`
+	ClientCertificateData string      `yaml:"client-certificate-data,omitempty"`
+	ClientKey             string      `yaml:"client-key,omitempty"`
+	ClientKeyData         string      `yaml:"client-key-data,omitempty"`
+	Token                 string      `yaml:"token,omitempty"`
+	TokenFile             string      `yaml:"tokenFile,omitempty"`
+	Username              string      `yaml:"username,omitempty"`
+	Password              string      `yaml:"password,omitempty"`
+	Exec                  *ExecConfig `yaml:"exec,omitempty"`
+}
+
+// ExecConfig specifies a command to provide client credentials
+type ExecConfig struct {
+	APIVersion         string       `yaml:"apiVersion"`
+	Command            string       `yaml:"command"`
+	Args               []string     `yaml:"args,omitempty"`
+	Env                []ExecEnvVar `yaml:"env,omitempty"`
+	ProvideClusterInfo bool         `yaml:"provideClusterInfo,omitempty"`
+	InstallHint        string       `yaml:"installHint,omitempty"`
+}
+
+// ExecEnvVar contains environment variable to set when executing the command
+type ExecEnvVar struct {
+	Name  string `yaml:"name"`
+	Value string `yaml:"value"`
 }
 
 // LoadedKubeConfig contains the resolved configuration from a kubeconfig file
@@ -78,8 +95,11 @@ type LoadedKubeConfig struct {
 	// ClientKeyData is the client key data (PEM encoded)
 	ClientKeyData []byte
 
-	// BearerToken for token-based authentication
+	// BearerToken for token-based authentication (static token)
 	BearerToken string
+
+	// ExecConfig for exec-based credential provider (dynamic token)
+	ExecConfig *ExecConfig
 
 	// InsecureSkipTLSVerify skips TLS verification
 	InsecureSkipTLSVerify bool
@@ -207,6 +227,11 @@ func LoadKubeConfig(kubeconfigPath string, contextName string) (*LoadedKubeConfi
 			return nil, fmt.Errorf("failed to read token file: %w", err)
 		}
 		loaded.BearerToken = string(tokenData)
+	}
+
+	// Copy exec config for exec-based credential provider
+	if user.Exec != nil {
+		loaded.ExecConfig = user.Exec
 	}
 
 	return loaded, nil
