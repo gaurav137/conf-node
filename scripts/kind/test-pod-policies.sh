@@ -197,9 +197,9 @@ metadata:
     kubelet-proxy.io/signature: "$signature"
 spec:
   nodeSelector:
-    node-type: signed-workloads
+    pod-policy: "required"
   tolerations:
-  - key: "signed-workloads"
+  - key: "pod-policy"
     operator: "Equal"
     value: "required"
     effect: "NoSchedule"
@@ -244,9 +244,9 @@ metadata:
   namespace: default
 spec:
   nodeSelector:
-    node-type: signed-workloads
+    pod-policy: "required"
   tolerations:
-  - key: "signed-workloads"
+  - key: "pod-policy"
     operator: "Equal"
     value: "required"
     effect: "NoSchedule"
@@ -318,9 +318,9 @@ metadata:
     kubelet-proxy.io/signature: "aW52YWxpZHNpZ25hdHVyZWRhdGE="
 spec:
   nodeSelector:
-    node-type: signed-workloads
+    pod-policy: "required"
   tolerations:
-  - key: "signed-workloads"
+  - key: "pod-policy"
     operator: "Equal"
     value: "required"
     effect: "NoSchedule"
@@ -410,9 +410,9 @@ metadata:
     kubelet-proxy.io/signature: "$signature"
 spec:
   nodeSelector:
-    node-type: signed-workloads
+    pod-policy: "required"
   tolerations:
-  - key: "signed-workloads"
+  - key: "pod-policy"
     operator: "Equal"
     value: "required"
     effect: "NoSchedule"
@@ -525,9 +525,9 @@ metadata:
     kubelet-proxy.io/signature: "$signature"
 spec:
   nodeSelector:
-    node-type: signed-workloads
+    pod-policy: "required"
   tolerations:
-  - key: "signed-workloads"
+  - key: "pod-policy"
     operator: "Equal"
     value: "required"
     effect: "NoSchedule"
@@ -624,9 +624,9 @@ metadata:
     kubelet-proxy.io/signature: "$signature"
 spec:
   nodeSelector:
-    node-type: signed-workloads
+    pod-policy: "required"
   tolerations:
-  - key: "signed-workloads"
+  - key: "pod-policy"
     operator: "Equal"
     value: "required"
     effect: "NoSchedule"
@@ -726,9 +726,9 @@ metadata:
     kubelet-proxy.io/signature: "$signature"
 spec:
   nodeSelector:
-    node-type: signed-workloads
+    pod-policy: "required"
   tolerations:
-  - key: "signed-workloads"
+  - key: "pod-policy"
     operator: "Equal"
     value: "required"
     effect: "NoSchedule"
@@ -828,9 +828,9 @@ metadata:
     kubelet-proxy.io/signature: "$signature"
 spec:
   nodeSelector:
-    node-type: signed-workloads
+    pod-policy: "required"
   tolerations:
-  - key: "signed-workloads"
+  - key: "pod-policy"
     operator: "Equal"
     value: "required"
     effect: "NoSchedule"

@@ -83,10 +83,10 @@ label_and_taint_worker_node() {
     log_info "Adding label and taint to worker node for signed pods only..."
     
     # Add label to worker node
-    kubectl label node "$WORKER_NODE_NAME" node-type=signed-workloads --overwrite
+    kubectl label node "$WORKER_NODE_NAME" pod-policy=required --overwrite
     
     # Add taint to worker node - only pods with matching toleration can be scheduled
-    kubectl taint node "$WORKER_NODE_NAME" signed-workloads=required:NoSchedule --overwrite
+    kubectl taint node "$WORKER_NODE_NAME" pod-policy=required:NoSchedule --overwrite
     
     log_info "Worker node labeled and tainted:"
     kubectl get node "$WORKER_NODE_NAME" -o jsonpath='{.spec.taints}' | jq . 2>/dev/null || kubectl get node "$WORKER_NODE_NAME" -o jsonpath='{.spec.taints}'
@@ -196,7 +196,7 @@ print_usage() {
     log_info "Deployment complete! Here's how to test:"
     echo ""
     echo "NOTE: kubelet-proxy is installed on the WORKER node only."
-    echo "      The worker node has a taint 'signed-workloads=required:NoSchedule'."
+    echo "      The worker node has a taint 'pod-policy=required:NoSchedule'."
     echo "      Pods must have matching toleration AND node selector to be scheduled there."
     echo "      Pod policy verification is ENABLED - unsigned pods will be rejected."
     echo ""

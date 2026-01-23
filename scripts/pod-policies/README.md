@@ -6,7 +6,7 @@ This directory contains policy JSON files used for testing kubelet-proxy pod pol
 
 | File | Description | Used In Test |
 |------|-------------|--------------|
-| `nginx-pod-policy.json` | Policy allowing nginx:latest container on signed-workloads nodes | Signed pod test (TEST 1), Bad signature test (TEST 3), Image mismatch test (TEST 4) |
+| `nginx-pod-policy.json` | Policy allowing nginx:latest container on pod-policy nodes | Signed pod test (TEST 1), Bad signature test (TEST 3), Image mismatch test (TEST 4) |
 | `busybox-pod-policy.json` | Policy allowing busybox:latest with sleep command | Reference only |
 | `full-policy-pod-policy.json` | Policy with command, args, env, and volumeMounts | Full policy test (TEST 5), Command mismatch (TEST 6), Env mismatch (TEST 7), Volume mismatch (TEST 8) |
 
