@@ -17,8 +17,8 @@ KIND_IMAGE="${KIND_IMAGE:-kindest/node:v1.33.0}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
 WORKER_NODE_NAME="${CLUSTER_NAME}-worker"
-SIGNING_SERVER_IMAGE="signing-server:local"
-SIGNING_SERVER_CONTAINER="signing-server"
+SIGNING_SERVER_IMAGE="local-signing-server:local"
+SIGNING_SERVER_CONTAINER="local-signing-server"
 SIGNING_SERVER_PORT=8080
 
 # Proxy configuration
@@ -28,7 +28,7 @@ cleanup() {
     log_info "Cleaning up existing cluster if present..."
     kind delete cluster --name "$CLUSTER_NAME" 2>/dev/null || true
     
-    # Stop and remove signing-server container if running
+    # Stop and remove local-signing-server container if running
     docker stop "$SIGNING_SERVER_CONTAINER" 2>/dev/null || true
     docker rm "$SIGNING_SERVER_CONTAINER" 2>/dev/null || true
 }
@@ -47,10 +47,10 @@ build_binary() {
 }
 
 build_signing_server_image() {
-    log_info "Building signing-server container image..."
+    log_info "Building local-signing-server container image..."
     cd "$PROJECT_ROOT"
     
-    docker build -t "$SIGNING_SERVER_IMAGE" -f Dockerfile.signing-server .
+    docker build -t "$SIGNING_SERVER_IMAGE" -f Dockerfile.local-signing-server .
     
     log_info "Signing server image built: $SIGNING_SERVER_IMAGE"
 }
@@ -94,7 +94,7 @@ label_and_taint_worker_node() {
 }
 
 deploy_signing_server() {
-    log_info "Starting signing-server as local Docker container with TLS..."
+    log_info "Starting local-signing-server as local Docker container with TLS..."
     
     # Stop existing container if running
     docker stop "$SIGNING_SERVER_CONTAINER" 2>/dev/null || true
@@ -108,7 +108,7 @@ deploy_signing_server() {
     fi
     log_info "Using host IP for TLS SANs: $host_ip"
     
-    # Run signing-server container with TLS enabled
+    # Run local-signing-server container with TLS enabled
     # Include both localhost and the Docker gateway IP as SANs for the TLS cert
     docker run -d \
         --name "$SIGNING_SERVER_CONTAINER" \
@@ -119,8 +119,8 @@ deploy_signing_server() {
         --tls=true \
         --tls-hosts="localhost,127.0.0.1,${host_ip}"
     
-    # Wait for signing-server to be ready (now using HTTPS)
-    log_info "Waiting for signing-server to be ready (HTTPS)..."
+    # Wait for local-signing-server to be ready (now using HTTPS)
+    log_info "Waiting for local-signing-server to be ready (HTTPS)..."
     for i in {1..20}; do
         if curl -sf --insecure "https://localhost:$SIGNING_SERVER_PORT/health" >/dev/null 2>&1; then
             log_info "Signing server is running at https://localhost:$SIGNING_SERVER_PORT"
@@ -142,11 +142,11 @@ deploy_to_node() {
     # Create staging directory on node
     docker exec "$WORKER_NODE_NAME" mkdir -p "$staging_dir"
     
-    # Download signing certificate from signing-server
-    log_info "Downloading signing certificate from signing-server..."
+    # Download signing certificate from local-signing-server
+    log_info "Downloading signing certificate from local-signing-server..."
     local signing_cert_file="$PROJECT_ROOT/tmp/signing-cert.pem"
     curl -sf --insecure "https://localhost:$SIGNING_SERVER_PORT/signingcert" -o "$signing_cert_file" || {
-        log_error "Failed to download signing certificate from signing-server"
+        log_error "Failed to download signing certificate from local-signing-server"
         exit 1
     }
     log_info "Signing certificate downloaded to $signing_cert_file"
@@ -210,7 +210,7 @@ print_usage() {
     echo "   kubectl run test-unsigned --image=nginx --restart=Never"
     echo "   kubectl get pod test-unsigned  # Should show Failed status"
     echo ""
-    echo "4. Check signing-server:"
+    echo "4. Check local-signing-server:"
     echo "   docker logs $SIGNING_SERVER_CONTAINER"
     echo "   curl --insecure https://localhost:$SIGNING_SERVER_PORT/health"
     echo ""

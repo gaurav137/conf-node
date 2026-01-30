@@ -73,7 +73,7 @@ func (s *SigningServer) GenerateKeys() error {
 	template := x509.Certificate{
 		SerialNumber: big.NewInt(1),
 		Subject: pkix.Name{
-			CommonName:   "signing-server",
+			CommonName:   "local-signing-server",
 			Organization: []string{"kubelet-proxy"},
 		},
 		NotBefore:             time.Now(),
@@ -157,7 +157,7 @@ func (s *SigningServer) GenerateTLSCert(hosts []string) error {
 	template := x509.Certificate{
 		SerialNumber: big.NewInt(2),
 		Subject: pkix.Name{
-			CommonName:   "signing-server",
+			CommonName:   "local-signing-server",
 			Organization: []string{"kubelet-proxy"},
 		},
 		NotBefore:             time.Now(),
@@ -177,7 +177,7 @@ func (s *SigningServer) GenerateTLSCert(hosts []string) error {
 	}
 
 	// Always include localhost
-	template.DNSNames = append(template.DNSNames, "localhost", "signing-server")
+	template.DNSNames = append(template.DNSNames, "localhost", "local-signing-server")
 	template.IPAddresses = append(template.IPAddresses, net.ParseIP("127.0.0.1"))
 
 	certDER, err := x509.CreateCertificate(rand.Reader, &template, &template, &privateKey.PublicKey, privateKey)

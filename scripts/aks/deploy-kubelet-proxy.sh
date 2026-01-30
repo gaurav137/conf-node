@@ -4,7 +4,7 @@
 #
 # This script deploys kubelet-proxy to an AKS Flex node that was previously
 # set up using deploy-cluster.sh. It:
-# 1. Deploys the signing-server as a local Docker container with TLS
+# 1. Deploys the local-signing-server as a local Docker container with TLS
 # 2. Builds the kubelet-proxy binary
 # 3. Copies the binary and signing certificate to the VM via SSH
 # 4. Runs install.sh on the VM to install kubelet-proxy
@@ -37,8 +37,8 @@ log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
 GENERATED_DIR="$SCRIPT_DIR/generated"
-SIGNING_SERVER_IMAGE="signing-server:local"
-SIGNING_SERVER_CONTAINER="signing-server-aks"
+SIGNING_SERVER_IMAGE="local-signing-server:local"
+SIGNING_SERVER_CONTAINER="local-signing-server-aks"
 SIGNING_SERVER_PORT=8443
 PROXY_LISTEN_ADDR="127.0.0.1:6444"
 
@@ -98,25 +98,25 @@ build_binary() {
     log_info "Binary built: bin/kubelet-proxy-linux-amd64"
 }
 
-# Build signing-server Docker image
+# Build local-signing-server Docker image
 build_signing_server_image() {
-    log_info "Building signing-server container image..."
+    log_info "Building local-signing-server container image..."
     cd "$PROJECT_ROOT"
     
-    docker build -t "$SIGNING_SERVER_IMAGE" -f Dockerfile.signing-server .
+    docker build -t "$SIGNING_SERVER_IMAGE" -f Dockerfile.local-signing-server .
     
     log_info "Signing server image built: $SIGNING_SERVER_IMAGE"
 }
 
-# Deploy signing-server as local Docker container with TLS
+# Deploy local-signing-server as local Docker container with TLS
 deploy_signing_server() {
-    log_info "Starting signing-server as local Docker container with TLS..."
+    log_info "Starting local-signing-server as local Docker container with TLS..."
     
     # Stop and remove existing container if running
     docker stop "$SIGNING_SERVER_CONTAINER" 2>/dev/null || true
     docker rm "$SIGNING_SERVER_CONTAINER" 2>/dev/null || true
     
-    # Run signing-server container with TLS enabled
+    # Run local-signing-server container with TLS enabled
     docker run -d \
         --name "$SIGNING_SERVER_CONTAINER" \
         -p "$SIGNING_SERVER_PORT:8080" \
@@ -126,8 +126,8 @@ deploy_signing_server() {
         --tls=true \
         --tls-hosts="localhost,127.0.0.1"
     
-    # Wait for signing-server to be ready
-    log_info "Waiting for signing-server to be ready (HTTPS)..."
+    # Wait for local-signing-server to be ready
+    log_info "Waiting for local-signing-server to be ready (HTTPS)..."
     for i in {1..20}; do
         if curl -sf --insecure "https://localhost:$SIGNING_SERVER_PORT/health" >/dev/null 2>&1; then
             log_info "Signing server is running at https://localhost:$SIGNING_SERVER_PORT"
@@ -141,15 +141,15 @@ deploy_signing_server() {
     exit 1
 }
 
-# Download signing certificate from signing-server
+# Download signing certificate from local-signing-server
 download_signing_cert() {
-    log_info "Downloading signing certificate from signing-server..."
+    log_info "Downloading signing certificate from local-signing-server..."
     
     mkdir -p "$GENERATED_DIR"
     
     local signing_cert_file="$GENERATED_DIR/signing-cert.pem"
     curl -sf --insecure "https://localhost:$SIGNING_SERVER_PORT/signingcert" -o "$signing_cert_file" || {
-        log_error "Failed to download signing certificate from signing-server"
+        log_error "Failed to download signing certificate from local-signing-server"
         exit 1
     }
     

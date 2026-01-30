@@ -88,7 +88,7 @@ Instructions to generate deploy-flex-node-vm.sh
 
 Instructions to generate deploy-kubelet-proxy.sh
   - Assume a setup was created previously using deploy-cluster.sh and deploy-flex-node-vm.sh.
-  - Deploy the signing-server as a local docker container with TLS.
+  - Deploy the local-signing-server as a local docker container with TLS.
   - Run scripts/uninstall.sh script to cleanup any previous install.
   - Run scripts/install.sh script in the Azure VM via ssh using the --signing-cert-file and --local-binary options.
 
@@ -96,6 +96,6 @@ Instructions to generate test-pod-policies.sh
 - Assume a setup was created previously using deploy-cluster.sh and deploy-kubelet-proxy.sh.
 - Generate a sample pod yaml that conforms to the nginx-pod-policy.json file present under pod-policies.
   - The sample pod should have the toleration and node selector that was set on the VM node.
-- Using the signing-server to sign the nginx-pod-policy.json and have the policy and signature applied as annotations on the pod.
+- Using the local-signing-server to sign the nginx-pod-policy.json and have the policy and signature applied as annotations on the pod.
 - Apply the pod yaml on the cluster and test that the pod gets scheduled on the Azure VM node and runs successfully
 - Don't cleanup the sample pod so that it can be inspected after the test finishes.

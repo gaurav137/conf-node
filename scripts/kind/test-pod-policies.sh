@@ -19,7 +19,7 @@ WORKER_NODE_NAME="${CLUSTER_NAME}-worker"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
 TEST_POLICIES_DIR="$PROJECT_ROOT/scripts/pod-policies"
-SIGNING_SERVER_CONTAINER="signing-server"
+SIGNING_SERVER_CONTAINER="local-signing-server"
 SIGNING_SERVER_PORT="${SIGNING_SERVER_PORT:-8080}"
 SIGNING_SERVER_URL="${SIGNING_SERVER_URL:-http://localhost:$SIGNING_SERVER_PORT}"
 
@@ -42,7 +42,7 @@ check_prerequisites() {
         exit 1
     fi
     
-    # Check signing-server container is running
+    # Check local-signing-server container is running
     if ! docker ps --format '{{.Names}}' | grep -q "^${SIGNING_SERVER_CONTAINER}$"; then
         log_error "Signing server container not running. Run 'make deploy-kind' first."
         exit 1
@@ -55,21 +55,21 @@ check_prerequisites() {
 }
 
 check_signing_server() {
-    log_test "Checking signing-server status..."
+    log_test "Checking local-signing-server status..."
     echo ""
     
     docker ps --filter "name=$SIGNING_SERVER_CONTAINER" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
     echo ""
     
-    # Verify signing-server is responding (try HTTPS first, then HTTP)
+    # Verify local-signing-server is responding (try HTTPS first, then HTTP)
     if curl -sf --insecure "https://localhost:$SIGNING_SERVER_PORT/health" >/dev/null 2>&1; then
-        log_info "Signing server is HEALTHY (HTTPS)"
+        log_info "Local signing server is HEALTHY (HTTPS)"
         SIGNING_SERVER_URL="https://localhost:$SIGNING_SERVER_PORT"
     elif curl -sf "http://localhost:$SIGNING_SERVER_PORT/health" >/dev/null 2>&1; then
-        log_info "Signing server is HEALTHY (HTTP)"
+        log_info "Local signing server is HEALTHY (HTTP)"
         SIGNING_SERVER_URL="http://localhost:$SIGNING_SERVER_PORT"
     else
-        log_error "Signing server is NOT responding"
+        log_error "Local signing server is NOT responding"
         docker logs "$SIGNING_SERVER_CONTAINER" --tail 20
         exit 1
     fi
@@ -175,7 +175,7 @@ test_signed_pod() {
     log_info "Policy: $policy_json"
     
     # Sign the policy
-    log_info "Signing policy using signing-server..."
+    log_info "Signing policy using local-signing-server..."
     local signature
     signature=$(sign_policy "$policy_base64")
     
@@ -503,7 +503,7 @@ test_full_policy_pod() {
     log_info "Policy: $policy_json"
     
     # Sign the policy
-    log_info "Signing policy using signing-server..."
+    log_info "Signing policy using local-signing-server..."
     local signature
     signature=$(sign_policy "$policy_base64")
     

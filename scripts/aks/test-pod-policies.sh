@@ -69,14 +69,14 @@ check_prerequisites() {
 }
 
 check_signing_server() {
-    log_test "Checking signing-server status..."
+    log_test "Checking local-signing-server status..."
     echo ""
     
-    # Verify signing-server is responding
+    # Verify local-signing-server is responding
     if curl -sf --insecure "$SIGNING_SERVER_URL/health" >/dev/null 2>&1; then
-        log_info "Signing server is HEALTHY at $SIGNING_SERVER_URL"
+        log_info "Local signing server is HEALTHY at $SIGNING_SERVER_URL"
     else
-        log_error "Signing server is NOT responding at $SIGNING_SERVER_URL"
+        log_error "Local signing server is NOT responding at $SIGNING_SERVER_URL"
         log_error "Make sure deploy-kubelet-proxy.sh was run successfully"
         exit 1
     fi
@@ -177,7 +177,7 @@ test_signed_pod() {
     log_info "Policy: $policy_json"
     
     # Sign the policy
-    log_info "Signing policy using signing-server..."
+    log_info "Signing policy using local-signing-server..."
     local signature
     signature=$(sign_policy "$policy_base64")
     
@@ -511,7 +511,7 @@ test_full_policy_pod() {
     log_info "Policy: $policy_json"
     
     # Sign the policy
-    log_info "Signing policy using signing-server..."
+    log_info "Signing policy using local-signing-server..."
     local signature
     signature=$(sign_policy "$policy_base64")
     

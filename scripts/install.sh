@@ -11,7 +11,7 @@
 #
 # Required:
 #   --signing-cert-url URL    URL to download the signing certificate from
-#                             (e.g., https://signing-server.example.com/signingcert)
+#                             (e.g., https://local-signing-server.example.com/signingcert)
 #
 # Optional:
 #   --config FILE             JSON configuration file with all options
@@ -26,7 +26,7 @@
 #
 # JSON Config Example:
 #   {
-#     "signingCertUrl": "https://signing-server.example.com/signingcert",
+#     "signingCertUrl": "https://local-signing-server.example.com/signingcert",
 #     "version": "v1.0.0",
 #     "githubRepo": "gaurav137/conf-node",
 #     "proxyListenAddr": "127.0.0.1:6444",
