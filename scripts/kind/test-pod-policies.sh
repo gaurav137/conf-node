@@ -32,6 +32,7 @@ TEST5_RESULT=""
 TEST6_RESULT=""
 TEST7_RESULT=""
 TEST8_RESULT=""
+TEST9_RESULT=""
 
 check_prerequisites() {
     log_info "Checking prerequisites..."
@@ -147,6 +148,7 @@ cleanup_test_resources() {
     kubectl delete pod test-command-mismatch --ignore-not-found=true 2>/dev/null || true
     kubectl delete pod test-env-mismatch --ignore-not-found=true 2>/dev/null || true
     kubectl delete pod test-volume-mismatch --ignore-not-found=true 2>/dev/null || true
+    kubectl delete pod test-allowall --ignore-not-found=true 2>/dev/null || true
     kubectl delete configmap test-config --ignore-not-found=true 2>/dev/null || true
     kubectl delete pvc test-data --ignore-not-found=true 2>/dev/null || true
     sleep 2
@@ -895,6 +897,92 @@ EOF
     echo ""
 }
 
+test_allowall_pod() {
+    log_test "TEST 9: Creating a pod with ALLOWALL policy (should be ALLOWED without validation)..."
+    echo ""
+    
+    # Create the allowall policy: ["allowall"]
+    local policy_json='["allowall"]'
+    
+    # Base64 encode the policy
+    local policy_base64
+    policy_base64=$(printf '%s' "$policy_json" | base64 -w 0)
+    
+    log_info "Policy: $policy_json"
+    log_info "Policy base64: $policy_base64"
+    
+    # Sign the policy
+    log_info "Signing allowall policy using local-signing-server..."
+    local signature
+    signature=$(sign_policy "$policy_base64")
+    
+    if [[ -z "$signature" || "$signature" == "null" ]]; then
+        log_error "Failed to sign policy"
+        TEST9_RESULT="FAILED"
+        return
+    fi
+    
+    # Create a pod with any spec - it should be allowed because of allowall policy
+    # Using a completely different image/command that wouldn't match any normal policy
+    cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: Pod
+metadata:
+  name: test-allowall
+  namespace: default
+  annotations:
+    kubelet-proxy.io/policy: "$policy_base64"
+    kubelet-proxy.io/signature: "$signature"
+spec:
+  nodeSelector:
+    pod-policy: "required"
+  tolerations:
+  - key: "pod-policy"
+    operator: "Equal"
+    value: "required"
+    effect: "NoSchedule"
+  containers:
+  - name: any-container
+    image: alpine:latest
+    command: ["sleep", "3600"]
+    env:
+    - name: ANY_VAR
+      value: "any_value"
+EOF
+    
+    log_info "Waiting for pod to be scheduled..."
+    sleep 10
+    
+    echo ""
+    echo "Pod status:"
+    kubectl get pod test-allowall -o wide
+    echo ""
+    
+    # Check pod status
+    POD_STATUS=$(kubectl get pod test-allowall -o jsonpath='{.status.phase}')
+    POD_REASON=$(kubectl get pod test-allowall -o jsonpath='{.status.reason}' 2>/dev/null || echo "")
+    
+    if [[ "$POD_STATUS" == "Running" || "$POD_STATUS" == "Pending" || "$POD_STATUS" == "ContainerCreating" ]]; then
+        if [[ "$POD_REASON" != "NodeAdmissionRejected" ]]; then
+            log_info "✓ TEST 9 PASSED: Allowall policy pod was allowed without validation (status: $POD_STATUS)"
+            TEST9_RESULT="PASSED"
+        else
+            log_error "✗ TEST 9 FAILED: Allowall policy pod was rejected"
+            kubectl describe pod test-allowall
+            TEST9_RESULT="FAILED"
+        fi
+    elif [[ "$POD_STATUS" == "Failed" && "$POD_REASON" != "NodeAdmissionRejected" ]]; then
+        # Pod failed for other reasons - that's OK, it was admitted
+        log_info "✓ TEST 9 PASSED: Allowall policy pod was admitted (failed later due to: $POD_REASON)"
+        TEST9_RESULT="PASSED"
+    else
+        log_error "✗ TEST 9 FAILED: Allowall policy pod status is $POD_STATUS (reason: $POD_REASON)"
+        kubectl describe pod test-allowall
+        TEST9_RESULT="FAILED"
+    fi
+    echo ""
+}
+
 show_proxy_logs() {
     log_test "Recent kubelet-proxy logs (policy verification)..."
     echo ""
@@ -921,6 +1009,7 @@ run_tests() {
     test_command_mismatch_pod
     test_env_mismatch_pod
     test_volume_mismatch_pod
+    test_allowall_pod
     show_proxy_logs
     
     echo ""
@@ -1020,6 +1109,17 @@ run_tests() {
         failed=$((failed + 1))
     fi
     
+    if [[ "$TEST9_RESULT" == "PASSED" ]]; then
+        echo -e "  ${GREEN}✓${NC} TEST 9: Allowall policy allowed  - PASSED"
+        passed=$((passed + 1))
+    elif [[ "$TEST9_RESULT" == "PARTIAL" ]]; then
+        echo -e "  ${YELLOW}?${NC} TEST 9: Allowall policy allowed  - PARTIAL"
+        partial=$((partial + 1))
+    else
+        echo -e "  ${RED}✗${NC} TEST 9: Allowall policy allowed  - FAILED"
+        failed=$((failed + 1))
+    fi
+    
     echo ""
     echo "----------------------------------------"
     if [[ $failed -eq 0 && $partial -eq 0 ]]; then
@@ -1035,7 +1135,7 @@ run_tests() {
     echo "  docker exec $WORKER_NODE_NAME journalctl -u kubelet-proxy -f"
     echo ""
     echo "To clean up test resources:"
-    echo "  kubectl delete pod test-signed test-unsigned test-bad-sig test-image-mismatch test-full-policy test-command-mismatch test-env-mismatch test-volume-mismatch"
+    echo "  kubectl delete pod test-signed test-unsigned test-bad-sig test-image-mismatch test-full-policy test-command-mismatch test-env-mismatch test-volume-mismatch test-allowall"
     echo ""
     
     # Exit with error if any tests failed

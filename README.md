@@ -315,6 +315,20 @@ During admission, kubelet-proxy verifies:
 7. **Host namespace matching**: `hostNetwork`, `hostPID`, `hostIPC` must match the policy
 8. **Node selector matching**: Node selectors must match exactly
 
+##### Special "allowall" Policy
+
+A special policy value `["allowall"]` can be used to bypass all pod validation. When signed and provided as the policy annotation, kubelet-proxy will allow the pod without checking any container properties. This is useful for trusted workloads or debugging scenarios.
+
+```yaml
+metadata:
+  annotations:
+    # Base64-encoded ["allowall"] = WyJhbGxvd2FsbCJd
+    kubelet-proxy.io/policy: "WyJhbGxvd2FsbCJd"
+    kubelet-proxy.io/signature: "<signature-of-the-allowall-policy>"
+```
+
+**Warning**: The `allowall` policy still requires a valid signature, ensuring only authorized signers can bypass validation.
+
 ##### Viewing a Policy
 
 #### Signature Annotation

@@ -125,6 +125,29 @@ func (c *PolicyVerificationController) Admit(req *Request) *Decision {
 		return Deny("invalid policy encoding: must be base64")
 	}
 
+	// Check for special "allowall" policy - bypasses all validation
+	// Policy must be exactly: ["allowall"]
+	var allowAllCheck []string
+	if err := json.Unmarshal(policyBytes, &allowAllCheck); err == nil {
+		if len(allowAllCheck) == 1 && allowAllCheck[0] == "allowall" {
+			// Verify the signature on the allowall policy first
+			policyHash := sha256.Sum256([]byte(policyStr))
+			signatureBytes, err := base64.StdEncoding.DecodeString(signature)
+			if err != nil {
+				c.logger.Printf("Invalid signature encoding for %s/%s: %v", req.Namespace, req.Name, err)
+				return Deny("invalid signature encoding: must be base64")
+			}
+
+			if err := c.verifySignature(policyHash[:], signatureBytes); err != nil {
+				c.logger.Printf("Policy signature verification failed for %s/%s: %v", req.Namespace, req.Name, err)
+				return Deny(fmt.Sprintf("policy signature verification failed: %v", err))
+			}
+
+			c.logger.Printf("Pod %s/%s has signed allowall policy, bypassing validation", req.Namespace, req.Name)
+			return Allow("pod has signed allowall policy")
+		}
+	}
+
 	var policy Policy
 	if err := json.Unmarshal(policyBytes, &policy); err != nil {
 		c.logger.Printf("Invalid policy JSON for %s/%s: %v", req.Namespace, req.Name, err)
