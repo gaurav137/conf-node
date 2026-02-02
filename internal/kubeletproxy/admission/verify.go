@@ -469,7 +469,12 @@ func (c *PolicyVerificationController) capabilitySetsEqual(a, b []string) bool {
 func (c *PolicyVerificationController) verifySignature(hash, signature []byte) error {
 	switch key := c.publicKey.(type) {
 	case *rsa.PublicKey:
-		return rsa.VerifyPKCS1v15(key, crypto.SHA256, hash, signature)
+		// Use RSA-PSS with SHA-256
+		pssOpts := &rsa.PSSOptions{
+			SaltLength: rsa.PSSSaltLengthEqualsHash,
+			Hash:       crypto.SHA256,
+		}
+		return rsa.VerifyPSS(key, crypto.SHA256, hash, signature, pssOpts)
 
 	case *ecdsa.PublicKey:
 		if !ecdsa.VerifyASN1(key, hash, signature) {

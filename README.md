@@ -350,12 +350,12 @@ The kubelet-proxy verifies pods by:
 
 #### Supported Key Types
 
-- **ECDSA** (recommended): P-256, P-384, P-521 curves
-- **RSA**: PKCS#1 v1.5 signatures
+- **RSA-PSS** (recommended): RSA with PSS padding and SHA-256
+- **ECDSA**: P-256, P-384, P-521 curves (legacy support)
 
 ## local-signing-server
 
-The local-signing-server is an HTTP REST API server that manages ECDSA signing keys and signs pod specs. It generates a key pair once on startup and holds the private key in memory for the lifetime of the server.
+The local-signing-server is an HTTP REST API server that manages RSA signing keys and signs pod specs using RSA-PSS with SHA-256. It generates a key pair once on startup and holds the private key in memory for the lifetime of the server.
 
 ### Endpoints
 

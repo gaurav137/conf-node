@@ -1,9 +1,9 @@
 package main
 
 import (
-	"crypto/ecdsa"
-	"crypto/elliptic"
+	"crypto"
 	"crypto/rand"
+	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
@@ -25,7 +25,7 @@ import (
 
 // SigningServer holds the server state including the key pair
 type SigningServer struct {
-	privateKey *ecdsa.PrivateKey
+	privateKey *rsa.PrivateKey
 	certPEM    []byte
 	mu         sync.RWMutex
 	generated  bool
@@ -54,7 +54,7 @@ func NewSigningServer() *SigningServer {
 	return &SigningServer{}
 }
 
-// GenerateKeys generates a new ECDSA key pair and self-signed certificate
+// GenerateKeys generates a new RSA key pair and self-signed certificate
 func (s *SigningServer) GenerateKeys() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -63,8 +63,8 @@ func (s *SigningServer) GenerateKeys() error {
 		return nil // Keys already generated
 	}
 
-	// Generate ECDSA private key using P-256 curve
-	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	// Generate RSA private key (2048 bits)
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		return fmt.Errorf("failed to generate private key: %w", err)
 	}
@@ -98,11 +98,11 @@ func (s *SigningServer) GenerateKeys() error {
 	s.certPEM = certPEM
 	s.generated = true
 
-	log.Println("Generated new ECDSA key pair and certificate")
+	log.Println("Generated new RSA key pair and certificate (RSA-PSS with SHA-256)")
 	return nil
 }
 
-// Sign signs the given payload and returns the base64-encoded signature
+// Sign signs the given payload using RSA-PSS with SHA-256 and returns the base64-encoded signature
 func (s *SigningServer) Sign(payload string) (string, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -114,8 +114,12 @@ func (s *SigningServer) Sign(payload string) (string, error) {
 	// Hash the payload
 	hash := sha256.Sum256([]byte(payload))
 
-	// Sign the hash
-	signature, err := ecdsa.SignASN1(rand.Reader, s.privateKey, hash[:])
+	// Sign the hash using RSA-PSS
+	pssOpts := &rsa.PSSOptions{
+		SaltLength: rsa.PSSSaltLengthEqualsHash,
+		Hash:       crypto.SHA256,
+	}
+	signature, err := rsa.SignPSS(rand.Reader, s.privateKey, crypto.SHA256, hash[:], pssOpts)
 	if err != nil {
 		return "", fmt.Errorf("failed to sign payload: %w", err)
 	}
@@ -147,8 +151,8 @@ func (s *SigningServer) GenerateTLSCert(hosts []string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Generate ECDSA private key for TLS
-	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	// Generate RSA private key for TLS (2048 bits)
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		return fmt.Errorf("failed to generate TLS private key: %w", err)
 	}
@@ -192,12 +196,9 @@ func (s *SigningServer) GenerateTLSCert(hosts []string) error {
 	})
 
 	// Encode private key to PEM
-	keyBytes, err := x509.MarshalECPrivateKey(privateKey)
-	if err != nil {
-		return fmt.Errorf("failed to marshal TLS private key: %w", err)
-	}
+	keyBytes := x509.MarshalPKCS1PrivateKey(privateKey)
 	s.tlsKeyPEM = pem.EncodeToMemory(&pem.Block{
-		Type:  "EC PRIVATE KEY",
+		Type:  "RSA PRIVATE KEY",
 		Bytes: keyBytes,
 	})
 
