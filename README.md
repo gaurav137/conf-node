@@ -208,112 +208,142 @@ When using the kind deployment, the local-signing-server runs as a local Docker 
 
 Instead of signing the full pod spec (which changes when Kubernetes adds defaults), kubelet-proxy uses a **policy-based approach**. Security-relevant fields are extracted from the pod spec into a deterministic policy JSON, which is then signed and verified.
 
-The policy uses a **per-container structure** where each container is identified by name, allowing precise verification that each container in the pod matches its signed policy.
+The policy is an **array of container policies**, where each container is identified by name, allowing precise verification that each container in the pod matches its signed policy.
 
-##### Top-Level Policy Fields
+##### Policy Structure
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `containers` | `object` | Map of container name to container policy |
-| `initContainers` | `object` | Map of init container name to container policy |
-| `allowHostNetwork` | `boolean` | Present and `true` if pod spec has `hostNetwork: true` |
-| `allowHostPID` | `boolean` | Present and `true` if pod spec has `hostPID: true` |
-| `allowHostIPC` | `boolean` | Present and `true` if pod spec has `hostIPC: true` |
-| `nodeSelector` | `object` | Key-value pairs from pod spec `nodeSelector` |
+The policy is a JSON array of container policy objects:
+
+```json
+[
+  {
+    "name": "<container-name>",
+    "properties": {
+      "image": "<image>",
+      "command": ["cmd", "arg1"],
+      "environmentVariables": [{"name": "VAR", "value": "val"}],
+      "volumeMounts": [{"name": "vol", "mountPath": "/mnt", "readOnly": true}],
+      "privileged": false,
+      "capabilities": ["NET_ADMIN"]
+    }
+  }
+]
+```
 
 ##### Container Policy Fields
 
-Each entry in `containers` or `initContainers` is keyed by container name and contains:
+Each container policy object has:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `image` | `string` | The container image (supports wildcards in verification) |
+| `name` | `string` | The container name (must match the pod spec container name) |
+| `properties` | `object` | Container properties to verify |
+
+##### Container Properties Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `image` | `string` | The container image (must match exactly) |
 | `command` | `string[]` | Container entrypoint array (overrides ENTRYPOINT) |
-| `args` | `string[]` | Arguments to the entrypoint (overrides CMD) |
-| `env` | `object[]` | Environment variables with `name` and `value` fields |
-| `volumeMounts` | `object[]` | Volume mounts with `name`, `mountPath`, and optional `readOnly` fields |
-| `privileged` | `boolean` | Present and `true` if `securityContext.privileged: true` |
-| `capabilities` | `string[]` | Sorted list of Linux capabilities from `securityContext.capabilities.add` |
+| `environmentVariables` | `object[]` | Environment variables with `name`, `value`, and optional `regex` fields |
+| `volumeMounts` | `object[]` | Volume mounts with `name`, `mountPath`, `mountType`, and `readOnly` fields |
+| `privileged` | `boolean` | Whether the container can run as privileged |
+| `capabilities` | `string[]` | Linux capabilities to add |
 
-##### Policy Generation Rules
+##### Environment Variable Fields
 
-- **Per-container tracking**: Each container is tracked by name, ensuring the pod spec containers match exactly
-- **Omitted fields**: Fields are only included in the policy if they have non-empty or non-false values
-- **Environment variables**: Only env vars with direct `value` are included; `valueFrom` references are excluded
-- **Deterministic serialization**: The policy is serialized as compact JSON with sorted keys (no whitespace) to ensure consistent signatures
-- **Base64 encoding**: The policy JSON is base64-encoded before signing and stored in the annotation
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | `string` | Environment variable name |
+| `value` | `string` | Environment variable value |
+| `regex` | `boolean` | If true, value is treated as a regex pattern |
+
+##### Volume Mount Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | `string` | Volume name |
+| `mountPath` | `string` | Path where the volume is mounted |
+| `mountType` | `string` | Optional volume type |
+| `readOnly` | `boolean` | Whether the mount is read-only |
 
 ##### Example Policy
 
 For a pod with:
 ```yaml
 spec:
-  initContainers:
-    - name: init
-      image: busybox:latest
   containers:
     - name: app
-      image: nginx:latest
-      command: ["/bin/sh"]
-      args: ["-c", "nginx -g 'daemon off;'"]
+      image: busybox:latest
+      command: ["/bin/myapp"]
       env:
+        - name: APP_ENV
+          value: "production"
         - name: LOG_LEVEL
-          value: "info"
+          value: "debug"
       volumeMounts:
         - name: config
-          mountPath: /etc/nginx/conf.d
+          mountPath: /etc/app
           readOnly: true
-      securityContext:
-        privileged: true
-        capabilities:
-          add: ["NET_ADMIN", "SYS_TIME"]
-    - name: sidecar
-      image: envoyproxy/envoy:v1.28
-  hostNetwork: true
-  nodeSelector:
-    kubernetes.io/os: linux
+        - name: data
+          mountPath: /data
 ```
 
-The generated policy would be:
+The policy would be:
 ```json
-{
-  "allowHostNetwork": true,
-  "containers": {
-    "app": {
-      "args": ["-c", "nginx -g 'daemon off;'"],
-      "capabilities": ["NET_ADMIN", "SYS_TIME"],
-      "command": ["/bin/sh"],
-      "env": [{"name": "LOG_LEVEL", "value": "info"}],
-      "image": "nginx:latest",
-      "privileged": true,
-      "volumeMounts": [{"mountPath": "/etc/nginx/conf.d", "name": "config", "readOnly": true}]
-    },
-    "sidecar": {
-      "image": "envoyproxy/envoy:v1.28"
+[
+  {
+    "name": "app",
+    "properties": {
+      "image": "busybox:latest",
+      "command": ["/bin/myapp"],
+      "environmentVariables": [
+        {"name": "APP_ENV", "value": "production"},
+        {"name": "LOG_LEVEL", "value": "debug"}
+      ],
+      "volumeMounts": [
+        {"name": "config", "mountPath": "/etc/app", "readOnly": true},
+        {"name": "data", "mountPath": "/data", "readOnly": false}
+      ]
     }
-  },
-  "initContainers": {
-    "init": {
-      "image": "busybox:latest"
-    }
-  },
-  "nodeSelector": {
-    "kubernetes.io/os": "linux"
   }
-}
+]
+```
+
+##### Simple Policy Example
+
+For a basic nginx pod:
+```yaml
+spec:
+  containers:
+    - name: test
+      image: nginx:latest
+```
+
+The policy would be:
+```json
+[
+  {
+    "name": "test",
+    "properties": {
+      "image": "nginx:latest",
+      "command": [],
+      "environmentVariables": [],
+      "volumeMounts": []
+    }
+  }
+]
 ```
 
 ##### Verification Behavior
 
 During admission, kubelet-proxy verifies:
 1. **Container name matching**: Every container in the pod must have a corresponding entry in the policy (by name)
-2. **Image matching**: Each container's image must match its policy entry (wildcards supported)
-3. **Command and args matching**: `command` and `args` must match exactly per container
-4. **Environment variables matching**: Environment variables (with direct values) must match exactly
+2. **Image matching**: Each container's image must match its policy entry
+3. **Command matching**: `command` must match exactly per container
+4. **Environment variables matching**: Environment variables must match (supports regex matching)
 5. **Volume mounts matching**: Volume mounts must match by name, mountPath, and readOnly flag
 6. **Security context matching**: `privileged` and `capabilities` must match exactly per container
-7. **Host namespace matching**: `hostNetwork`, `hostPID`, `hostIPC` must match the policy
-8. **Node selector matching**: Node selectors must match exactly
 
 ##### Special "allowall" Policy
 
