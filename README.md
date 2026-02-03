@@ -4,32 +4,13 @@ A collection of Go binaries for enabling confidential nodes on [AKS Flex Node](h
 
 ## Installation on VM Nodes
 
-Use the `install.sh` script with a JSON configuration file:
+Use the `install.sh` script with a signing certificate file:
 
 ```bash
-# Create a configuration file
-cat > kubelet-proxy-config.json <<EOF
-{
-  "signingCertUrl": "https://local-signing-server.example.com/signingcert"
-}
-EOF
-
-# Download and run the installer
-curl -fsSL https://raw.githubusercontent.com/gaurav137/conf-node/main/scripts/install.sh | sudo bash -s -- --config kubelet-proxy-config.json
+VERSION=v0.0.7
+curl -fsSL https://github.com/gaurav137/conf-node/releases/download/$VERSION/install.sh | sudo bash -s -- \
+  --signing-cert-file /path/to/signing-cert.pem
 ```
-
-### Configuration Options
-
-| JSON Field | Description |
-|------------|-------------|
-| `signingCertUrl` | URL to download the signing certificate from |
-| `signingCertUrlCaCert` | Path to CA certificate for verifying the signing cert URL (for HTTPS with self-signed certs) |
-| `signingCertFile` | Path to local signing certificate file (alternative to URL) |
-| `localBinary` | Path to local kubelet-proxy binary (skips GitHub download, for testing) |
-| `version` | Kubelet-proxy version to install (default: latest from GitHub releases) |
-| `githubRepo` | GitHub repository (default: gaurav137/conf-node) |
-| `proxyListenAddr` | Proxy listen address (default: 127.0.0.1:6444) |
-| `skipKubeletRestart` | Don't restart kubelet after installation (default: false) |
 
 ### Uninstalling
 
@@ -61,17 +42,6 @@ Build a specific binary:
 ```bash
 make kubelet-proxy
 make local-signing-server
-```
-
-## Other Commands
-
-```bash
-make clean   # Remove build artifacts
-make test    # Run tests
-make fmt     # Format code
-make vet     # Run go vet
-make lint    # Run linter (requires golangci-lint)
-make help    # Show available targets
 ```
 
 ## kubelet-proxy
@@ -480,3 +450,24 @@ The kind deployment:
 - Fetches the signing certificate from local-signing-server
 - Installs kubelet-proxy on the worker node with pod policy verification enabled
 - Configures kubelet to route through the proxy
+
+## Testing with AKS
+
+Deploy kubelet-proxy to an AKS cluster with an AKS Flex Node VM:
+
+```bash
+# Deploy AKS cluster and flex node with kubelet-proxy
+make deploy-aks
+
+# Run pod policy verification tests
+make test-aks
+```
+
+The AKS deployment:
+- Creates an Azure RBAC-enabled AKS cluster
+- Deploys an Ubuntu 24.04 VM with managed identities for kubelet and resource access
+- Joins the VM to the AKS cluster as a flex node using [AKS Flex Node](https://github.com/gaurav137/AKSFlexNode)
+- Runs local-signing-server as a local Docker container on the VM
+- Installs kubelet-proxy with pod policy verification enabled
+- Adds a taint `pod-policy=required:NoSchedule` to the node for policy-required workloads
+- Signs and deploys test pods using the local-signing-server
