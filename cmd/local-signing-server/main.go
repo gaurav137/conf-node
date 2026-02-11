@@ -111,8 +111,14 @@ func (s *SigningServer) Sign(payload string) (string, error) {
 		return "", fmt.Errorf("keys not generated")
 	}
 
-	// Hash the payload
-	hash := sha256.Sum256([]byte(payload))
+	// Decode the base64 encoded payload into bytes
+	payloadBytes, err := base64.StdEncoding.DecodeString(payload)
+	if err != nil {
+		return "", fmt.Errorf("failed to decode base64 payload: %w", err)
+	}
+
+	// Hash the decoded payload bytes using SHA-256
+	hash := sha256.Sum256(payloadBytes)
 
 	// Sign the hash using RSA-PSS
 	pssOpts := &rsa.PSSOptions{

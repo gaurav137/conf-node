@@ -131,7 +131,8 @@ func (c *PolicyVerificationController) Admit(req *Request) *Decision {
 	if err := json.Unmarshal(policyBytes, &allowAllCheck); err == nil {
 		if len(allowAllCheck) == 1 && allowAllCheck[0] == "allowall" {
 			// Verify the signature on the allowall policy first
-			policyHash := sha256.Sum256([]byte(policyStr))
+			// Hash the decoded policy bytes (not the base64 string)
+			policyHash := sha256.Sum256(policyBytes)
 			signatureBytes, err := base64.StdEncoding.DecodeString(signature)
 			if err != nil {
 				c.logger.Printf("Invalid signature encoding for %s/%s: %v", req.Namespace, req.Name, err)
@@ -154,9 +155,9 @@ func (c *PolicyVerificationController) Admit(req *Request) *Decision {
 		return Deny(fmt.Sprintf("invalid policy JSON: %v", err))
 	}
 
-	// Verify the signature on the base64-encoded policy (what was actually signed)
-	// We sign the base64 string, not the decoded bytes, for consistency
-	policyHash := sha256.Sum256([]byte(policyStr))
+	// Verify the signature on the decoded policy bytes
+	// Hash the decoded policy bytes (not the base64 string)
+	policyHash := sha256.Sum256(policyBytes)
 	signatureBytes, err := base64.StdEncoding.DecodeString(signature)
 	if err != nil {
 		c.logger.Printf("Invalid signature encoding for %s/%s: %v", req.Namespace, req.Name, err)
