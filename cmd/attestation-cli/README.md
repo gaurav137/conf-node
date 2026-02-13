@@ -1,6 +1,6 @@
-# Attestation Client
+# Attestation CLI
 
-A Go binary that collects attestation evidence from an Azure Confidential VM (CVM), including a TPM Quote and the AMD SEV-SNP attestation report.
+A Go command-line binary that collects attestation evidence from an Azure Confidential VM (CVM), including a TPM Quote and the AMD SEV-SNP attestation report.
 
 ## How It Works
 
