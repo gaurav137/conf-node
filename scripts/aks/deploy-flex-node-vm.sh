@@ -13,8 +13,8 @@
 #
 # Environment Variables:
 #   LOCATION         Azure region (default: centralindia)
-#   VM_SIZE          VM size (default: Standard_D2s_v3)
-#   VM_IMAGE         VM image (default: Ubuntu2404)
+#   VM_SIZE          VM size (default: Standard_C2as_v5)
+#   VM_IMAGE         VM image (default: Canonical:0001-com-ubuntu-confidential-vm-jammy:22_04-lts-cvm:latest)
 #
 # Prerequisites:
 #   - deploy-cluster.sh must have been run successfully
@@ -35,8 +35,8 @@ log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
 # Configuration
 LOCATION="${LOCATION:-centralindia}"
-VM_SIZE="${VM_SIZE:-Standard_D2s_v3}"
-VM_IMAGE="${VM_IMAGE:-Ubuntu2404}"
+VM_SIZE="${VM_SIZE:-Standard_DC2as_v5}"
+VM_IMAGE="${VM_IMAGE:-Canonical:0001-com-ubuntu-confidential-vm-jammy:22_04-lts-cvm:latest}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GENERATED_DIR="$SCRIPT_DIR/generated"
 PROJECT_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
@@ -172,6 +172,10 @@ create_vm() {
             --generate-ssh-keys \
             --assign-identity "$RESOURCE_OWNER_MI_ID" "$KUBELET_MI_ID" \
             --public-ip-sku Standard \
+            --enable-vtpm true \
+            --security-type ConfidentialVM \
+            --os-disk-security-encryption-type VMGuestStateOnly \
+            --enable-secure-boot true \
             --output none
         
         log_info "VM created"

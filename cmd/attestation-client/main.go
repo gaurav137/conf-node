@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"fmt"
-	"io"
 	"log"
 	"os"
 
@@ -14,9 +13,17 @@ import (
 )
 
 const (
-	tpmDevice          = "/dev/tpmrm0"
-	sevGuestReportPath = "/sys/kernel/security/sev-guest/report"
-	akPersistentHandle = 0x81010001
+	tpmDevice = "/dev/tpmrm0"
+
+	// Azure CVM pre-provisioned AIK (Attestation Identity Key)
+	aikPersistentHandle = 0x81000003 // AIK_PUB_INDEX — AIK public key
+	aikCertNVIndex      = 0x01C101D0 // AIK_CERT_INDEX — AIK certificate (x.509)
+
+	// HCL report NV index — the HCL firmware stores the SNP attestation
+	// report in vTPM NVRAM at this well-known index on Azure CVMs.
+	hclReportNVIndex    = 0x01400001
+	hclReportHeaderSize = 32   // bytes of HCL header before the SNP report
+	snpReportSize       = 1184 // bytes of the raw AMD SNP attestation report
 )
 
 func main() {
@@ -30,26 +37,30 @@ func main() {
 	}
 	defer tpmDev.Close()
 
-	akHandle := tpm2.TPMHandle(akPersistentHandle)
+	akHandle := tpm2.TPMHandle(aikPersistentHandle)
 
 	// --------------------------------------------
-	// 2. Ensure AK exists (create if missing)
+	// 2. Read the pre-provisioned AIK
+	//    On Azure CVMs the HCL firmware creates an AIK at 0x81000003.
 	// --------------------------------------------
 	akName, exists := readPersistentHandle(tpmDev, akHandle)
-
 	if !exists {
-		fmt.Println("AK not found. Creating...")
-		akName, err = createAndPersistAK(tpmDev, akHandle)
-		if err != nil {
-			log.Fatalf("Failed to create AK: %v", err)
-		}
-		fmt.Println("AK created and persisted.")
+		log.Fatalf("Azure-provisioned AIK not found at handle 0x%08x", aikPersistentHandle)
+	}
+	fmt.Println("Azure-provisioned AIK found.")
+
+	// --------------------------------------------
+	// 3. Read AIK certificate from NV index
+	// --------------------------------------------
+	aikCert, err := nvRead(tpmDev, tpm2.TPMHandle(aikCertNVIndex))
+	if err != nil {
+		log.Printf("Warning: could not read AIK cert from NV 0x%08x: %v", aikCertNVIndex, err)
 	} else {
-		fmt.Println("AK already exists.")
+		fmt.Printf("AIK certificate: %d bytes\n", len(aikCert))
 	}
 
 	// --------------------------------------------
-	// 3. Generate TPM Quote
+	// 4. Generate TPM Quote
 	// --------------------------------------------
 	nonce := []byte("external-verifier-nonce")
 
@@ -86,48 +97,41 @@ func main() {
 	fmt.Println("TPM Quote generated.")
 
 	// --------------------------------------------
-	// 4. Hash TPM Quote
+	// 5. Hash TPM Quote
 	// --------------------------------------------
 	hash := sha256.Sum256(quoteBlob.Bytes())
 	fmt.Printf("SHA256(Quote): %x\n", hash)
 
 	// --------------------------------------------
-	// 5. Build 64-byte SNP report_data
+	// 6. Read HCL report from vTPM NVRAM (contains SNP report)
+	//    On Azure CVMs the HCL firmware pre-generates the SNP
+	//    attestation report at boot and stores it at NV index 0x01400001.
 	// --------------------------------------------
-	reportData := make([]byte, 64)
-	copy(reportData[0:32], hash[:])
-	copy(reportData[32:], []byte("app-specific-data"))
-
-	// --------------------------------------------
-	// 6. Request SNP report via securityfs
-	// --------------------------------------------
-	f, err := os.OpenFile(sevGuestReportPath, os.O_RDWR, 0)
+	hclBlob, err := getHCLReport(tpmDev)
 	if err != nil {
-		log.Fatalf("Open SNP report path failed: %v", err)
+		log.Fatalf("Failed to read HCL report: %v", err)
 	}
-	defer f.Close()
+	fmt.Printf("HCL report size: %d bytes\n", len(hclBlob))
 
-	n, err := f.Write(reportData)
-	if err != nil || n != 64 {
-		log.Fatalf("Failed writing report_data")
+	if len(hclBlob) < hclReportHeaderSize+snpReportSize {
+		log.Fatalf("HCL report too small (%d bytes), expected at least %d",
+			len(hclBlob), hclReportHeaderSize+snpReportSize)
 	}
-
-	var snpBuf bytes.Buffer
-	_, err = io.Copy(&snpBuf, f)
-	if err != nil {
-		log.Fatalf("Failed reading SNP report: %v", err)
-	}
-
-	rawSNP := snpBuf.Bytes()
-	fmt.Printf("SNP report size: %d bytes\n", len(rawSNP))
+	snpReport := hclBlob[hclReportHeaderSize : hclReportHeaderSize+snpReportSize]
+	fmt.Printf("SNP report extracted: %d bytes\n", len(snpReport))
 
 	// --------------------------------------------
 	// 7. Save artifacts
 	// --------------------------------------------
 	os.WriteFile("tpm_quote.bin", quoteBlob.Bytes(), 0644)
-	os.WriteFile("snp_report.bin", rawSNP, 0644)
-
-	fmt.Println("Saved tpm_quote.bin and snp_report.bin")
+	os.WriteFile("hcl_report.bin", hclBlob, 0644)
+	os.WriteFile("snp_report.bin", snpReport, 0644)
+	if aikCert != nil {
+		os.WriteFile("aik_cert.der", aikCert, 0644)
+		fmt.Println("Saved tpm_quote.bin, hcl_report.bin, snp_report.bin, and aik_cert.der")
+	} else {
+		fmt.Println("Saved tpm_quote.bin, hcl_report.bin, and snp_report.bin")
+	}
 }
 
 // ------------------------------------------------------------
@@ -145,61 +149,68 @@ func readPersistentHandle(tpm transport.TPM, handle tpm2.TPMHandle) (tpm2.TPM2BN
 }
 
 // ------------------------------------------------------------
-// Helper: Create + Persist AK
+// Read the HCL report from vTPM NVRAM at the well-known NV index.
+// The HCL firmware on Azure CVMs writes the SNP attestation report
+// here at boot time. The data has a 32-byte header followed by the
+// raw 1184-byte AMD SNP report.
+// Equivalent to: tpm2_nvread -C o 0x01400001
 // ------------------------------------------------------------
-func createAndPersistAK(tpm transport.TPM, persistentHandle tpm2.TPMHandle) (tpm2.TPM2BName, error) {
+func getHCLReport(tpm transport.TPM) ([]byte, error) {
+	return nvRead(tpm, tpm2.TPMHandle(hclReportNVIndex))
+}
 
-	createRsp, err := tpm2.CreatePrimary{
-		PrimaryHandle: tpm2.TPMRHEndorsement,
-		InPublic: tpm2.New2B(tpm2.TPMTPublic{
-			Type:    tpm2.TPMAlgRSA,
-			NameAlg: tpm2.TPMAlgSHA256,
-			ObjectAttributes: tpm2.TPMAObject{
-				SignEncrypt:         true,
-				Restricted:          true,
-				FixedTPM:            true,
-				FixedParent:         true,
-				SensitiveDataOrigin: true,
-				UserWithAuth:        true,
+// ------------------------------------------------------------
+// Generic NV index reader — reads the full contents of any NV
+// index in chunks (TPM max NV buffer is typically 1024 bytes).
+// Equivalent to: tpm2_nvread -C o <index>
+// ------------------------------------------------------------
+func nvRead(tpm transport.TPM, nvIndex tpm2.TPMHandle) ([]byte, error) {
+
+	// Read NV public to discover the data size and NV name
+	nvPubRsp, err := tpm2.NVReadPublic{
+		NVIndex: nvIndex,
+	}.Execute(tpm)
+	if err != nil {
+		return nil, fmt.Errorf("NVReadPublic(0x%08x): %w", nvIndex, err)
+	}
+
+	nvPublic, err := nvPubRsp.NVPublic.Contents()
+	if err != nil {
+		return nil, fmt.Errorf("parse NV public: %w", err)
+	}
+
+	totalSize := int(nvPublic.DataSize)
+	fmt.Printf("NV index 0x%08x: %d bytes\n", hclReportNVIndex, totalSize)
+
+	// Read NV data in chunks (TPM max NV buffer is typically 1024 bytes)
+	const maxChunk = 1024
+	data := make([]byte, 0, totalSize)
+
+	for offset := 0; offset < totalSize; {
+		chunkSize := totalSize - offset
+		if chunkSize > maxChunk {
+			chunkSize = maxChunk
+		}
+
+		readRsp, err := tpm2.NVRead{
+			AuthHandle: tpm2.AuthHandle{
+				Handle: tpm2.TPMRHOwner,
+				Auth:   tpm2.PasswordAuth(nil),
 			},
-			Parameters: tpm2.NewTPMUPublicParms(
-				tpm2.TPMAlgRSA,
-				&tpm2.TPMSRSAParms{
-					Scheme: tpm2.TPMTRSAScheme{
-						Scheme: tpm2.TPMAlgRSASSA,
-						Details: tpm2.NewTPMUAsymScheme(
-							tpm2.TPMAlgRSASSA,
-							&tpm2.TPMSSigSchemeRSASSA{
-								HashAlg: tpm2.TPMAlgSHA256,
-							},
-						),
-					},
-					KeyBits: 2048,
-				},
-			),
-		}),
-	}.Execute(tpm)
-	if err != nil {
-		return tpm2.TPM2BName{}, fmt.Errorf("CreatePrimary failed: %v", err)
-	}
-	defer tpm2.FlushContext{FlushHandle: createRsp.ObjectHandle}.Execute(tpm)
+			NVIndex: tpm2.NamedHandle{
+				Handle: nvIndex,
+				Name:   nvPubRsp.NVName,
+			},
+			Size:   uint16(chunkSize),
+			Offset: uint16(offset),
+		}.Execute(tpm)
+		if err != nil {
+			return nil, fmt.Errorf("NVRead at offset %d: %w", offset, err)
+		}
 
-	_, err = tpm2.EvictControl{
-		Auth: tpm2.TPMRHOwner,
-		ObjectHandle: &tpm2.NamedHandle{
-			Handle: createRsp.ObjectHandle,
-			Name:   createRsp.Name,
-		},
-		PersistentHandle: tpm2.TPMIDHPersistent(persistentHandle),
-	}.Execute(tpm)
-	if err != nil {
-		return tpm2.TPM2BName{}, fmt.Errorf("EvictControl failed: %v", err)
+		data = append(data, readRsp.Data.Buffer...)
+		offset += len(readRsp.Data.Buffer)
 	}
 
-	// Read back the persisted key's name
-	name, exists := readPersistentHandle(tpm, persistentHandle)
-	if !exists {
-		return tpm2.TPM2BName{}, fmt.Errorf("failed to read back persisted key")
-	}
-	return name, nil
+	return data, nil
 }
