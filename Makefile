@@ -9,18 +9,19 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev
 # Binary names
 KUBELET_PROXY := kubelet-proxy
 SIGNING_SERVER := local-signing-server
-ATTESTATION_CLIENT := attestation-client
+ATTESTATION_CLIENT := attestation-cli
+ATTESTATION_SERVER := attestation-server
 
 # Build flags
 LDFLAGS := -ldflags "-s -w -X main.version=$(VERSION)"
 
-.PHONY: all build clean kubelet-proxy local-signing-server attestation-client help release
+.PHONY: all build clean kubelet-proxy local-signing-server attestation-cli attestation-server help release
 
 ## all: Build all binaries
 all: build
 
 ## build: Build all binaries
-build: kubelet-proxy local-signing-server attestation-client
+build: kubelet-proxy local-signing-server attestation-cli attestation-server
 
 ## kubelet-proxy: Build the kubelet-proxy binary
 kubelet-proxy:
@@ -34,11 +35,17 @@ local-signing-server:
 	@mkdir -p $(BUILD_DIR)
 	$(GO) build $(GOFLAGS) $(LDFLAGS) -o $(BUILD_DIR)/$(SIGNING_SERVER) ./cmd/local-signing-server
 
-## attestation-client: Build the attestation-client binary
-attestation-client:
-	@echo "Building attestation-client..."
+## attestation-cli: Build the attestation-cli binary
+attestation-cli:
+	@echo "Building attestation-cli..."
 	@mkdir -p $(BUILD_DIR)
-	$(GO) build $(GOFLAGS) $(LDFLAGS) -o $(BUILD_DIR)/$(ATTESTATION_CLIENT) ./cmd/attestation-client
+	$(GO) build $(GOFLAGS) $(LDFLAGS) -o $(BUILD_DIR)/$(ATTESTATION_CLIENT) ./cmd/attestation-cli
+
+## attestation-server: Build the attestation-server binary
+attestation-server:
+	@echo "Building attestation-server..."
+	@mkdir -p $(BUILD_DIR)
+	$(GO) build $(GOFLAGS) $(LDFLAGS) -o $(BUILD_DIR)/$(ATTESTATION_SERVER) ./cmd/attestation-server
 
 ## clean: Remove build artifacts
 clean:
@@ -94,19 +101,33 @@ release: clean
 	sha256sum $(DIST_DIR)/local-signing-server-linux-arm64.tar.gz | cut -d' ' -f1 > $(DIST_DIR)/local-signing-server-linux-arm64.tar.gz.sha256
 	@rm $(DIST_DIR)/local-signing-server
 	
-	@# Build attestation-client linux/amd64
-	@echo "Building attestation-client linux/amd64..."
-	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build $(LDFLAGS) -o $(DIST_DIR)/attestation-client ./cmd/attestation-client
-	tar -czf $(DIST_DIR)/attestation-client-linux-amd64.tar.gz -C $(DIST_DIR) attestation-client
-	sha256sum $(DIST_DIR)/attestation-client-linux-amd64.tar.gz | cut -d' ' -f1 > $(DIST_DIR)/attestation-client-linux-amd64.tar.gz.sha256
-	@rm $(DIST_DIR)/attestation-client
+	@# Build attestation-cli linux/amd64
+	@echo "Building attestation-cli linux/amd64..."
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build $(LDFLAGS) -o $(DIST_DIR)/attestation-cli ./cmd/attestation-cli
+	tar -czf $(DIST_DIR)/attestation-cli-linux-amd64.tar.gz -C $(DIST_DIR) attestation-cli
+	sha256sum $(DIST_DIR)/attestation-cli-linux-amd64.tar.gz | cut -d' ' -f1 > $(DIST_DIR)/attestation-cli-linux-amd64.tar.gz.sha256
+	@rm $(DIST_DIR)/attestation-cli
 	
-	@# Build attestation-client linux/arm64
-	@echo "Building attestation-client linux/arm64..."
-	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 $(GO) build $(LDFLAGS) -o $(DIST_DIR)/attestation-client ./cmd/attestation-client
-	tar -czf $(DIST_DIR)/attestation-client-linux-arm64.tar.gz -C $(DIST_DIR) attestation-client
-	sha256sum $(DIST_DIR)/attestation-client-linux-arm64.tar.gz | cut -d' ' -f1 > $(DIST_DIR)/attestation-client-linux-arm64.tar.gz.sha256
-	@rm $(DIST_DIR)/attestation-client
+	@# Build attestation-cli linux/arm64
+	@echo "Building attestation-cli linux/arm64..."
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 $(GO) build $(LDFLAGS) -o $(DIST_DIR)/attestation-cli ./cmd/attestation-cli
+	tar -czf $(DIST_DIR)/attestation-cli-linux-arm64.tar.gz -C $(DIST_DIR) attestation-cli
+	sha256sum $(DIST_DIR)/attestation-cli-linux-arm64.tar.gz | cut -d' ' -f1 > $(DIST_DIR)/attestation-cli-linux-arm64.tar.gz.sha256
+	@rm $(DIST_DIR)/attestation-cli
+	
+	@# Build attestation-server linux/amd64
+	@echo "Building attestation-server linux/amd64..."
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build $(LDFLAGS) -o $(DIST_DIR)/attestation-server ./cmd/attestation-server
+	tar -czf $(DIST_DIR)/attestation-server-linux-amd64.tar.gz -C $(DIST_DIR) attestation-server
+	sha256sum $(DIST_DIR)/attestation-server-linux-amd64.tar.gz | cut -d' ' -f1 > $(DIST_DIR)/attestation-server-linux-amd64.tar.gz.sha256
+	@rm $(DIST_DIR)/attestation-server
+	
+	@# Build attestation-server linux/arm64
+	@echo "Building attestation-server linux/arm64..."
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 $(GO) build $(LDFLAGS) -o $(DIST_DIR)/attestation-server ./cmd/attestation-server
+	tar -czf $(DIST_DIR)/attestation-server-linux-arm64.tar.gz -C $(DIST_DIR) attestation-server
+	sha256sum $(DIST_DIR)/attestation-server-linux-arm64.tar.gz | cut -d' ' -f1 > $(DIST_DIR)/attestation-server-linux-arm64.tar.gz.sha256
+	@rm $(DIST_DIR)/attestation-server
 	
 	@echo "Release artifacts created in $(DIST_DIR)/"
 	@ls -la $(DIST_DIR)/

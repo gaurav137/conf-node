@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Test script for attestation-client on Azure CVM
-# Usage: ./scripts/aks/test-attestation-client.sh <user@host> [ssh-key]
+# Test script for attestation-cli on Azure CVM
+# Usage: ./scripts/aks/test-attestation-cli.sh <user@host> [ssh-key]
 
 if [[ $# -lt 1 ]]; then
     echo "Usage: $0 <user@host> [ssh-key]" >&2
@@ -13,8 +13,8 @@ VM_HOST="$1"
 SSH_KEY="${2:-~/.ssh/id_rsa}"
 SSH_OPTS="-i ${SSH_KEY} -o StrictHostKeyChecking=no -o ConnectTimeout=10"
 
-BINARY="bin/attestation-client"
-REMOTE_BIN="/tmp/attestation-client"
+BINARY="bin/attestation-cli"
+REMOTE_BIN="/tmp/attestation-cli"
 REMOTE_DIR="/tmp"
 LOCAL_OUT="tmp/attestation-output"
 
@@ -25,8 +25,8 @@ echo "Target: ${VM_HOST}"
 echo ""
 
 # 1. Build
-echo "--- Building attestation-client ---"
-make attestation-client
+echo "--- Building attestation-cli ---"
+make attestation-cli
 echo ""
 
 # 2. Copy binary to CVM
@@ -35,8 +35,8 @@ scp ${SSH_OPTS} "${BINARY}" "${VM_HOST}:${REMOTE_BIN}"
 echo ""
 
 # 3. Run on CVM
-echo "--- Running attestation-client ---"
-ssh ${SSH_OPTS} "${VM_HOST}" "sudo ${REMOTE_BIN}"
+echo "--- Running attestation-cli ---"
+ssh ${SSH_OPTS} "${VM_HOST}" "cd ${REMOTE_DIR} && sudo ${REMOTE_BIN}"
 echo ""
 
 # 4. Copy artifacts back

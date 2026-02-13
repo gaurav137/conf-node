@@ -1,13 +1,13 @@
 #!/bin/bash
 #
-# Deploy attestation-client to AKS Flex Node VM
+# Deploy attestation-cli to AKS Flex Node VM
 #
-# This script builds and copies the attestation-client binary to the Azure VM
+# This script builds and copies the attestation-cli binary to the Azure VM
 # that was previously set up using deploy-cluster.sh and deploy-flex-node-vm.sh.
 # The binary can then be run locally from within the VM.
 #
 # Usage:
-#   ./deploy-attestation-client.sh [options]
+#   ./deploy-attestation-cli.sh [options]
 #
 # Options:
 #   --help, -h     Show this help message
@@ -37,9 +37,9 @@ GENERATED_DIR="$SCRIPT_DIR/generated"
 
 # Show help
 show_help() {
-    echo "Usage: ./deploy-attestation-client.sh [options]"
+    echo "Usage: ./deploy-attestation-cli.sh [options]"
     echo ""
-    echo "Deploy attestation-client binary to the AKS Flex Node VM."
+    echo "Deploy attestation-cli binary to the AKS Flex Node VM."
     echo ""
     echo "Options:"
     echo "  --help, -h     Show this help message"
@@ -107,49 +107,49 @@ get_resource_info() {
     log_info "VM public IP: $VM_PUBLIC_IP"
 }
 
-# Build attestation-client binary
+# Build attestation-cli binary
 build_binary() {
-    log_info "Building attestation-client binary..."
+    log_info "Building attestation-cli binary..."
     cd "$PROJECT_ROOT"
 
     # Build for Linux (Azure VMs run Linux)
     CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -v -ldflags "-s -w" \
-        -o bin/attestation-client-linux-amd64 \
-        ./cmd/attestation-client
+        -o bin/attestation-cli-linux-amd64 \
+        ./cmd/attestation-cli
 
-    log_info "Binary built: bin/attestation-client-linux-amd64"
+    log_info "Binary built: bin/attestation-cli-linux-amd64"
 }
 
-# Copy attestation-client binary to the Azure VM
+# Copy attestation-cli binary to the Azure VM
 deploy_to_vm() {
-    log_info "Deploying attestation-client to Azure VM: $VM_NAME..."
+    log_info "Deploying attestation-cli to Azure VM: $VM_NAME..."
 
     local ssh_opts="-i $SSH_PRIVATE_KEY_FILE -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
-    local remote_path="/usr/local/bin/attestation-client"
+    local remote_path="/usr/local/bin/attestation-cli"
 
     # Copy the binary to the VM
-    log_info "Copying attestation-client binary to VM..."
-    scp $ssh_opts "$PROJECT_ROOT/bin/attestation-client-linux-amd64" azureuser@$VM_PUBLIC_IP:/tmp/attestation-client || {
-        log_error "Failed to copy attestation-client binary to VM"
+    log_info "Copying attestation-cli binary to VM..."
+    scp $ssh_opts "$PROJECT_ROOT/bin/attestation-cli-linux-amd64" azureuser@$VM_PUBLIC_IP:/tmp/attestation-cli || {
+        log_error "Failed to copy attestation-cli binary to VM"
         exit 1
     }
 
     # Move it into place and make it executable
-    ssh $ssh_opts azureuser@$VM_PUBLIC_IP "sudo mv /tmp/attestation-client $remote_path && sudo chmod +x $remote_path" || {
-        log_error "Failed to install attestation-client on VM"
+    ssh $ssh_opts azureuser@$VM_PUBLIC_IP "sudo mv /tmp/attestation-cli $remote_path && sudo chmod +x $remote_path" || {
+        log_error "Failed to install attestation-cli on VM"
         exit 1
     }
 
     # Verify binary is in place
-    log_info "Verifying attestation-client on VM..."
-    ssh $ssh_opts azureuser@$VM_PUBLIC_IP "$remote_path --help 2>&1 || echo 'attestation-client binary is installed at $remote_path'" || true
+    log_info "Verifying attestation-cli on VM..."
+    ssh $ssh_opts azureuser@$VM_PUBLIC_IP "$remote_path --help 2>&1 || echo 'attestation-cli binary is installed at $remote_path'" || true
 
-    log_info "attestation-client deployed to VM at $remote_path"
+    log_info "attestation-cli deployed to VM at $remote_path"
 }
 
 # Main
 main() {
-    log_info "=== Deploy attestation-client to AKS Flex Node VM ==="
+    log_info "=== Deploy attestation-cli to AKS Flex Node VM ==="
 
     get_resource_info
     build_binary
@@ -157,9 +157,9 @@ main() {
 
     echo ""
     log_info "=== Deployment complete ==="
-    log_info "You can run the attestation-client on the VM via SSH:"
+    log_info "You can run the attestation-cli on the VM via SSH:"
     echo "  ssh -i $SSH_PRIVATE_KEY_FILE azureuser@$VM_PUBLIC_IP"
-    echo "  sudo attestation-client"
+    echo "  sudo attestation-cli"
 }
 
 main
